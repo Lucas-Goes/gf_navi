@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Data (SQLite + ChromaDB will be created on first run)
+data/*.db
+data/chroma/
+
+# OS
+Thumbs.db
