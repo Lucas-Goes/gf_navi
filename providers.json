@@ -1,0 +1,20 @@
+{
+  "nvidia": {
+    "llm_provider": "openai",
+    "llm_model_id": "meta/llama-3.2-3b-instruct",
+    "llm_endpoint_url": "https://integrate.api.nvidia.com/v1",
+    "llm_api_key": "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"
+  },
+  "bedrock": {
+    "llm_provider": "bedrock",
+    "llm_model_id": "anthropic.claude-3-opus-20240229-v1:0",
+    "aws_region": "us-east-1",
+    "aws_profile": "default"
+  },
+  "ollama": {
+    "llm_provider": "openai",
+    "llm_model_id": "llama3.2",
+    "llm_endpoint_url": "http://localhost:11434/v1",
+    "llm_api_key": ""
+  }
+}

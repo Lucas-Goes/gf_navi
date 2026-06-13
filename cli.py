@@ -8,11 +8,13 @@ Uso:
   python cli.py list [--type T] [--period YYYY-MM]  Listar memórias
   python cli.py get <id>           Ver detalhes de uma memória
   python cli.py sync-docs          Sincronizar documentos
+  python cli.py provider [nome]    Ver/trocar provider (nvidia, bedrock, ollama)
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import textwrap
 from pathlib import Path
@@ -271,6 +273,63 @@ def _print_result(r):
     print()
 
 
+PROVIDERS_FILE = Path(__file__).parent / "providers.json"
+
+
+def cmd_provider(args, services):
+    providers = json.loads(PROVIDERS_FILE.read_text())
+
+    if not args.name:
+        current = settings.llm_provider
+        print(f"\n🔌 Provider atual: {current}")
+        print(f"   Modelo: {settings.llm_model_id}")
+        print(f"   Endpoint: {settings.llm_endpoint_url or '—'}")
+        print(f"\n   Providers disponíveis: {', '.join(providers.keys())}")
+        print(f"   Use: python cli.py provider <nome>\n")
+        return
+
+    name = args.name.lower()
+    if name not in providers:
+        print(f"❌ Provider '{name}' não encontrado.")
+        print(f"   Disponíveis: {', '.join(providers.keys())}")
+        return
+
+    conf = providers[name]
+    env_path = Path(__file__).parent / ".env"
+
+    key_mapping = {
+        "llm_provider": "LLM_PROVIDER",
+        "llm_model_id": "LLM_MODEL_ID",
+        "llm_endpoint_url": "LLM_ENDPOINT_URL",
+        "llm_api_key": "LLM_API_KEY",
+        "aws_region": "AWS_REGION",
+        "aws_profile": "AWS_PROFILE",
+    }
+
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    env_map = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, val = stripped.partition("=")
+        env_map[key.strip()] = val.strip()
+
+    for lk, uk in key_mapping.items():
+        if lk in conf:
+            env_map[uk] = conf[lk]
+        else:
+            env_map.pop(uk, None)
+
+    new_lines = [f"{k}={v}" for k, v in env_map.items()]
+    env_path.write_text("\n".join(new_lines) + "\n")
+
+    print(f"\n✅ Provider trocado para: {name}")
+    print(f"   Modelo: {conf.get('llm_model_id', '—')}")
+    print(f"   Endpoint: {conf.get('llm_endpoint_url', '—')}")
+    print("   Reinicie o CLI para aplicar as mudanças.\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Navi — Cérebro Institucional (CLI)"
@@ -301,6 +360,9 @@ def main():
 
     sub.add_parser("sync-docs", help="Sincronizar documentos")
 
+    p_prov = sub.add_parser("provider", help="Ver/trocar provider LLM")
+    p_prov.add_argument("name", nargs="?", help="nvidia, bedrock, ollama")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -316,9 +378,13 @@ def main():
         "list": cmd_list,
         "get": cmd_get,
         "sync-docs": cmd_sync_docs,
+        "provider": cmd_provider,
     }
 
-    commands[args.command](args, services)
+    if args.command == "provider":
+        commands[args.command](args, None)
+    else:
+        commands[args.command](args, services)
 
 
 if __name__ == "__main__":
