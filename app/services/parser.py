@@ -31,32 +31,22 @@ Regras:
 - Retorne APENAS o JSON, sem texto adicional."""
 
 
-class BedrockParser:
-    def __init__(self):
-        self._client = None
-
-    @property
-    def client(self):
-        if self._client is None:
-            from app.config import get_bedrock_client
-            self._client = get_bedrock_client()
-        return self._client
+class ParserService:
+    def __init__(self, llm):
+        self.llm = llm
 
     def parse(self, text: str) -> Optional[Preview]:
-        from app.config import settings
-
         prompt = f"{PARSER_SYSTEM_PROMPT}\n\nTexto do usuário:\n{text}"
 
         try:
-            response = self.client.converse(
-                modelId=settings.bedrock_model_id,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={"maxTokens": 2000, "temperature": 0.1},
+            content = self.llm.invoke(
+                prompt=prompt,
+                max_tokens=2000,
+                temperature=0.1,
             )
-            content = response["output"]["message"]["content"][0]["text"]
             return self._parse_response(content, text)
         except Exception as e:
-            raise RuntimeError(f"Erro ao chamar Bedrock: {e}")
+            raise RuntimeError(f"Erro ao chamar LLM: {e}")
 
     def _parse_response(self, content: str, original_text: str) -> Preview:
         json_str = content.strip()

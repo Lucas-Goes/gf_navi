@@ -34,7 +34,7 @@
 ## 3. Estrutura de Diretórios
 
 ```
-gf_navy/
+gf_navi/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                  # FastAPI entry point + startup

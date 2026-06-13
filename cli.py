@@ -13,7 +13,6 @@ Uso:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import textwrap
 from pathlib import Path
@@ -21,9 +20,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.config import settings
-from app.models import Document, FactType, Preview
-from app.services.bedrock_parser import BedrockParser
-from app.services.bedrock_synthesizer import BedrockSynthesizer
+from app.models import Document, Preview
+from app.services.llm import create_provider
+from app.services.parser import ParserService
+from app.services.synthesizer import SynthesizerService
 from app.services.ingestion import IngestionService
 from app.services.search import SearchService
 from app.storage.sqlite_store import SQLiteStore
@@ -34,10 +34,11 @@ def get_services():
     sqlite = SQLiteStore(settings.sqlite_path)
     sqlite.run_migrations()
     vector = VectorStore(settings.chroma_path, settings.embedding_model)
-    parser = BedrockParser()
+    llm = create_provider(settings)
+    parser = ParserService(llm)
     ingestion = IngestionService(sqlite, vector)
     search = SearchService(sqlite, vector)
-    synthesizer = BedrockSynthesizer()
+    synthesizer = SynthesizerService(llm)
     return sqlite, vector, parser, ingestion, search, synthesizer
 
 
@@ -50,7 +51,7 @@ def cmd_add(args, services):
         preview = parser.parse(text)
     except Exception as e:
         print(f"❌ Erro ao processar: {e}")
-        print("   Verifique se o AWS Bedrock está configurado (aws configure).")
+        print("   Verifique se o LLM está configurado corretamente.")
         return
     if not preview:
         print("❌ Não foi possível extrair os campos.")
@@ -99,8 +100,11 @@ def cmd_ask(args, services):
         _print_result(r)
 
     print("\n🤖 Sintetizando resposta...\n")
-    answer = synthesizer.synthesize(question, results)
-    print(answer)
+    try:
+        answer = synthesizer.synthesize(question, results)
+        print(answer)
+    except Exception as e:
+        print(f"❌ Erro ao consultar LLM: {e}")
     print()
 
 
@@ -202,7 +206,6 @@ def cmd_sync_docs(args, services):
         if source_type == "pdf":
             try:
                 from pypdf import PdfReader
-
                 reader = PdfReader(str(filepath))
                 content = "\n".join(page.extract_text() or "" for page in reader.pages)
             except Exception as e:
@@ -258,8 +261,6 @@ def _show_preview(preview: Preview):
 
 
 def _print_result(r):
-    from app.services.search import SearchResult
-
     m = r.memory
     print(f"  [{m.id[:8]}] {m.title} ({m.closing_period})")
     print(f"         Tipo: {m.fact_type.value} | Score: {r.score:.3f}")

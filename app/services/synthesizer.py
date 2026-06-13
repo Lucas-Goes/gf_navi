@@ -15,22 +15,11 @@ Diretrizes:
 - Formate em markdown para legibilidade"""
 
 
-class BedrockSynthesizer:
-    def __init__(self):
-        self._client = None
+class SynthesizerService:
+    def __init__(self, llm):
+        self.llm = llm
 
-    @property
-    def client(self):
-        if self._client is None:
-            from app.config import get_bedrock_client
-            self._client = get_bedrock_client()
-        return self._client
-
-    def synthesize(
-        self, question: str, results: list[SearchResult]
-    ) -> str:
-        from app.config import settings
-
+    def synthesize(self, question: str, results: list[SearchResult]) -> str:
         context_parts = []
         for r in results:
             m = r.memory
@@ -56,19 +45,17 @@ class BedrockSynthesizer:
 
         context = "\n".join(context_parts)
         prompt = (
-            f"{SYNTHESIZER_SYSTEM_PROMPT}\n\n"
             f"Contexto das memórias institucionais:\n{context}\n\n"
             f"Pergunta do usuário:\n{question}\n\n"
             f"Resposta:"
         )
 
         try:
-            response = self.client.converse(
-                modelId=settings.bedrock_model_id,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={"maxTokens": 4000, "temperature": 0.3},
+            return self.llm.invoke(
+                prompt=prompt,
+                system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
+                max_tokens=4000,
+                temperature=0.3,
             )
-            content = response["output"]["message"]["content"][0]["text"]
-            return content
         except Exception as e:
-            return f"**Erro ao consultar Bedrock:** {e}"
+            return f"**Erro ao consultar LLM:** {e}"

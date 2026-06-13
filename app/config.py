@@ -1,18 +1,31 @@
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Server
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+
+    # Storage
     sqlite_path: str = str(Path(__file__).parent.parent / "data" / "memories.db")
     chroma_path: str = str(Path(__file__).parent.parent / "data" / "chroma")
+    documents_path: str = str(Path(__file__).parent.parent / "data" / "documents")
+
+    # Embedding
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+
+    # LLM Provider: "bedrock" | "openai"
+    llm_provider: str = "openai"
+    llm_model_id: str = "meta/llama-3.1-8b-instruct"
+    llm_endpoint_url: Optional[str] = None
+    llm_api_key: Optional[str] = None
+
+    # AWS Bedrock (only used when llm_provider = "bedrock")
     aws_region: str = "us-east-1"
     aws_profile: str = "default"
-    bedrock_model_id: str = "anthropic.claude-3-opus-20240229-v1:0"
-    documents_path: str = str(Path(__file__).parent.parent / "data" / "documents")
 
     class Config:
         env_file = ".env"
@@ -20,13 +33,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
-def get_bedrock_client():
-    import boto3
-    try:
-        session = boto3.Session(profile_name=settings.aws_profile)
-        return session.client("bedrock-runtime", region_name=settings.aws_region)
-    except Exception:
-        session = boto3.Session()
-        return session.client("bedrock-runtime", region_name=settings.aws_region)
