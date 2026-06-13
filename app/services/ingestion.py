@@ -43,12 +43,12 @@ class IngestionService:
             is_active=True,
         )
 
+        self.sqlite.insert_memory(memory)
+
         if preview.supersedes_id:
             self.sqlite.update_superseded_by(
                 preview.supersedes_id, memory.id
             )
-
-        self.sqlite.insert_memory(memory)
         self.vector.add_memory(
             memory_id=memory.id,
             title=memory.title,

@@ -107,6 +107,11 @@ class SQLiteStore:
         row = conn.execute(
             "SELECT * FROM memories WHERE id = ?", (memory_id,)
         ).fetchone()
+        if row:
+            return self._row_to_memory(row)
+        row = conn.execute(
+            "SELECT * FROM memories WHERE id LIKE ? || '%'", (memory_id,)
+        ).fetchone()
         return self._row_to_memory(row) if row else None
 
     def get_memories_by_ids(self, ids: list[str]) -> list[Memory]:
@@ -148,9 +153,16 @@ class SQLiteStore:
 
     def update_superseded_by(self, memory_id: str, superseded_by_id: str):
         conn = self.connect()
+        row = conn.execute(
+            "SELECT id FROM memories WHERE id = ? OR id LIKE ? || '%'",
+            (memory_id, memory_id),
+        ).fetchone()
+        if not row:
+            return
+        full_id = row["id"]
         conn.execute(
             "UPDATE memories SET superseded_by = ?, is_active = 0, updated_at = ? WHERE id = ?",
-            (superseded_by_id, superseded_by_id, memory_id),
+            (superseded_by_id, superseded_by_id, full_id),
         )
         conn.commit()
 

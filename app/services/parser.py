@@ -99,10 +99,16 @@ class ParserService:
         return raw
 
     def _parse_response(self, content: str, original_text: str) -> Preview:
-        json_str = content.strip()
-        if json_str.startswith("```"):
-            json_str = json_str.split("\n", 1)[1]
-            json_str = json_str.rsplit("```", 1)[0]
+        raw = content.strip()
+
+        m = re.search(r"```(?:json)?\s*\n(.*?)```", raw, re.DOTALL)
+        if m:
+            json_str = m.group(1).strip()
+        else:
+            json_str = raw
+
+        json_str = re.sub(r"^[^{]*", "", json_str)
+        json_str = re.sub(r"[^}]*$", "", json_str)
         json_str = json_str.strip()
 
         data = json.loads(json_str)

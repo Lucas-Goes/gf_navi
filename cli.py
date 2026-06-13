@@ -3,6 +3,7 @@ Navi CLI — Cérebro Institucional
 
 Uso:
   python cli.py add <texto>        Adicionar nova memória
+  python cli.py correct <id> <texto>  Corrigir memória (faz merge automático)
   python cli.py ask <pergunta>     Consultar memórias
   python cli.py search <termo>     Buscar memórias (sem LLM)
   python cli.py list [--type T] [--period YYYY-MM]  Listar memórias
@@ -76,6 +77,98 @@ def cmd_add(args, services):
     if confirm == "s":
         memory = ingestion.confirm(preview)
         print(f"\n✅ Memória salva! ID: {memory.id}")
+        print(f"   Título: {memory.title}")
+    else:
+        ingestion.remove_preview(preview.preview_id)
+        print("⏭️  Cancelado.")
+
+
+CORRECT_PROMPT = """Você é um analista de memória institucional. O usuário quer corrigir/atualizar uma memória existente.
+
+MEMÓRIA ORIGINAL:
+Título: {title}
+Tipo: {fact_type}
+Período: {closing_period}
+Descrição: {description}
+Decidido por: {decided_by}
+Solicitado por: {requested_by}
+Aprovado por: {approved_by}
+
+TEXTO DE CORREÇÃO DO USUÁRIO:
+{correction_text}
+
+Gere uma nova versão completa da memória (incorporando a correção) no JSON abaixo.
+Preencha TODOS os campos. Se um campo não foi alterado, mantenha o valor original.
+{json_schema}"""
+
+
+def cmd_correct(args, services):
+    sqlite, _, parser, ingestion, _, _ = services
+    memory_id = args.id
+    text = " ".join(args.text) if isinstance(args.text, list) else args.text
+
+    old = sqlite.get_memory(memory_id)
+    if not old:
+        print(f"❌ Memória {memory_id} não encontrada.")
+        return
+
+    print(f"\n📌 Memória original: {old.title} ({old.id[:8]})\n")
+
+    json_schema = """{
+  "title": "string",
+  "fact_type": "rule_change | decision | implementation | incident | other",
+  "closing_period": "YYYY-MM",
+  "description": "string",
+  "decided_by": "string | null",
+  "requested_by": "string | null",
+  "approved_by": "string | null",
+  "metadata": "object | null",
+  "confidence_score": 0.0-1.0
+}"""
+
+    prompt = CORRECT_PROMPT.format(
+        title=old.title,
+        fact_type=old.fact_type.value,
+        closing_period=old.closing_period,
+        description=old.description,
+        decided_by=old.decided_by or "",
+        requested_by=old.requested_by or "",
+        approved_by=old.approved_by or "",
+        correction_text=text,
+        json_schema=json_schema,
+    )
+
+    print("🧠 Fazendo merge do conteúdo com a correção...\n")
+    try:
+        content = parser.llm.invoke(
+            prompt=prompt,
+            max_tokens=2000,
+            temperature=0.1,
+        )
+        if not content or not content.strip():
+            print("❌ LLM retornou resposta vazia")
+            print(f"   Prompt enviado:\n{prompt[:500]}...")
+            return
+        preview = parser._parse_response(content, f"{old.description}\n{text}")
+    except json.JSONDecodeError as e:
+        print(f"❌ Erro ao interpretar JSON do LLM: {e}")
+        print(f"   Resposta bruta: {content[:300]}")
+        return
+    except Exception as e:
+        print(f"❌ Erro ao processar: {e}")
+        return
+
+    preview.supersedes_id = old.id
+    preview.is_correction = True
+    ingestion.store_preview(preview)
+
+    _show_preview(preview)
+    print(f"\n⚠️  Esta memória SUBSTITUIRÁ {memory_id[:8]} - {old.title}")
+
+    confirm = input("\n❓ Confirmar correção? (s/N): ").strip().lower()
+    if confirm == "s":
+        memory = ingestion.confirm(preview)
+        print(f"\n✅ Memória corrigida! Nova ID: {memory.id}")
         print(f"   Título: {memory.title}")
     else:
         ingestion.remove_preview(preview.preview_id)
@@ -360,6 +453,10 @@ def main():
 
     sub.add_parser("sync-docs", help="Sincronizar documentos")
 
+    p_correct = sub.add_parser("correct", help="Corrigir memória (faz merge com original)")
+    p_correct.add_argument("id", help="ID da memória a corrigir")
+    p_correct.add_argument("text", nargs="+", help="Texto da correção")
+
     p_prov = sub.add_parser("provider", help="Ver/trocar provider LLM")
     p_prov.add_argument("name", nargs="?", help="nvidia, bedrock, ollama")
 
@@ -373,6 +470,7 @@ def main():
 
     commands = {
         "add": cmd_add,
+        "correct": cmd_correct,
         "ask": cmd_ask,
         "search": cmd_search,
         "list": cmd_list,
