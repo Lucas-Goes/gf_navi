@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from typing import Optional
 
 from app.models import FactType, Preview
@@ -48,6 +50,54 @@ class ParserService:
         except Exception as e:
             raise RuntimeError(f"Erro ao chamar LLM: {e}")
 
+    def _normalize_period(self, raw: str) -> str:
+        if not raw:
+            return ""
+
+        raw = raw.strip()
+
+        MESES_PT = {
+            "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
+            "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+            "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
+            "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+            "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+        }
+
+        if re.match(r"^\d{4}-\d{2}$", raw):
+            return raw
+
+        m = re.match(r"^\d{4}(\d{2})$", raw)
+        if m:
+            return f"{raw[:4]}-{raw[4:]}"
+
+        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", raw)
+        if m:
+            return f"{m.group(3)}-{m.group(2)}"
+
+        m = re.match(r"(\d{2})/(\d{4})", raw)
+        if m and 1 <= int(m.group(1)) <= 12:
+            return f"{m.group(2)}-{m.group(1)}"
+
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2})", raw)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}"
+
+        raw_lower = raw.lower()
+        for nome, num in MESES_PT.items():
+            if nome in raw_lower:
+                m = re.search(r"(\d{4})", raw)
+                if m:
+                    return f"{m.group(1)}-{num:02d}"
+
+        try:
+            parsed = datetime.fromisoformat(raw)
+            return f"{parsed.year}-{parsed.month:02d}"
+        except ValueError:
+            pass
+
+        return raw
+
     def _parse_response(self, content: str, original_text: str) -> Preview:
         json_str = content.strip()
         if json_str.startswith("```"):
@@ -64,10 +114,13 @@ class ParserService:
 
         supersedes_id = data.get("supersedes_id") or None
 
+        raw_period = data.get("closing_period", "")
+        closing_period = self._normalize_period(raw_period)
+
         preview = Preview(
             title=data.get("title", "(sem título)")[:100],
             fact_type=fact_type,
-            closing_period=data.get("closing_period", ""),
+            closing_period=closing_period,
             description=data.get("description", original_text),
             decided_by=data.get("decided_by"),
             requested_by=data.get("requested_by"),
