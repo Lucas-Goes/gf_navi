@@ -699,13 +699,16 @@ def cmd_db(args, services):
             "  [cyan]db document <id>[/cyan]       Conteúdo completo de um documento\n"
             "  [cyan]db export json[/cyan]         Exportar tudo para JSON\n"
             "  [cyan]db export csv[/cyan]          Exportar tudo para CSV\n"
-            "  [cyan]db query <sql>[/cyan]         Executar SQL arbitrário\n"
+            "  [cyan]db query <sql>[/cyan]         Executar SELECT (somente leitura)\n"
         )
 
     elif cmd == "query":
         sql = " ".join(extra) if extra else None
         if not sql:
             Console().print("[red]Informe a SQL: db query <sql>[/red]")
+            return
+        if not sql.strip().upper().startswith("SELECT"):
+            Console().print("[red]Apenas consultas SELECT são permitidas (protegido contra alterações).[/red]")
             return
         console = Console()
         try:
