@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -443,6 +445,41 @@ def _select_tool(question: str) -> tuple[str, dict] | None:
     return None
 
 
+STOPWORDS = set("""a ante ao aos após até com contra de desde em entre
+para perante por sem sob sobre trás o a os as da das do dos dum duns
+num nums numa um uma umas uns ele ela eles elas me te se nos vos
+lhe lhes eu tu você vocês o a os as meu minha meus minhas teu tua
+teus tuas seu sua seus suas nosso nossa nossos nossas isso isto esse
+essa esses essas este esta estes estas aquele aquela aqueles aquelas
+aquilo que qual quem como quanto quanta quantos quantas onde aonde
+donde quando porque porquê pois já também ainda muito pouco mais menos
+demais todo toda todos todas algum alguma alguns algumas nenhum nenhuma
+nenhuns nenhumas certo certa certos certas outro outra outros outras
+vário vária vários várias tanto tanta tantos quantas quanto quanta
+quantos qualquer quaisquer cada qual seja seja se caso sim não nem
+era são fora fosse fosse fossem fosseis fosseis temos têm tem havia
+haja hajam hajas hajamos hajais haja são seja seja sejamos sejais
+sejam seria seriam seria seriam será serão seria seriam era eram é
+são está estão estava estavam esteve estivera estiveram estivera
+esteve estiveram estiverem estejamos estejais esteja estejam esteja
+fui foi fomos foram fora foram fosse fosse fossem fosseis fosseis
+fosse fosse fossem fora foram irei irá irão iria iriam iria iriam
+vá vão vamos vais vai vou vai vai vão vamos""".split())
+
+
+def _remove_accents(text: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _extract_keywords(text: str) -> str:
+    plain = _remove_accents(text)
+    words = plain.lower().split()
+    keywords = [w.strip(""".,;:!?()[]{}"'""") for w in words
+                if len(w) > 2 and w not in STOPWORDS and not w.startswith(("http", "www"))]
+    return " ".join(keywords[:10])
+
+
 def _is_empty_result(result: Any) -> bool:
     if result is None:
         return True
@@ -536,7 +573,7 @@ class AskAgent:
                     raise KeyError(tool)
             except Exception:
                 tool = "search_memories"
-                params = {"query": question}
+                params = {"query": _extract_keywords(question) or question}
 
         if tool not in TOOL_DEFINITIONS:
             yield "❌ Ferramenta desconhecida."
@@ -551,7 +588,8 @@ class AskAgent:
             return
 
         if _is_empty_result(result) and tool not in ("help", "count_memories", "list_periods", "list_fact_types", "add_memory", "correct_memory", "sync_documents"):
-            result = _execute_tool("search_memories", {"query": question})
+            new_query = _extract_keywords(question) or question
+            result = _execute_tool("search_memories", {"query": new_query})
 
         yield f" ✅\n\n"
 

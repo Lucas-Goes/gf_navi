@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -15,12 +17,18 @@ class SQLiteStore:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn: sqlite3.Connection | None = None
 
+    @staticmethod
+    def _noaccent(text: str) -> str:
+        nfkd = unicodedata.normalize("NFKD", text)
+        return "".join(c for c in nfkd if not unicodedata.combining(c))
+
     def connect(self):
         if self.conn is None:
             self.conn = sqlite3.connect(self.db_path)
             self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
+            self.conn.create_function("noaccent", 1, self._noaccent)
         return self.conn
 
     def close(self):
@@ -160,8 +168,16 @@ class SQLiteStore:
             conditions.append("closing_period = ?")
             params.append(closing_period)
         if text_query:
-            conditions.append("(title LIKE ? OR description LIKE ?)")
-            params.extend([f"%{text_query}%", f"%{text_query}%"])
+            tokens = [t.strip() for t in text_query.split() if t.strip()]
+            if len(tokens) > 1:
+                clauses = []
+                for token in tokens:
+                    clauses.append("(noaccent(title) LIKE noaccent(?) OR noaccent(description) LIKE noaccent(?))")
+                    params.extend([f"%{token}%", f"%{token}%"])
+                conditions.append(f"({' OR '.join(clauses)})")
+            else:
+                conditions.append("(noaccent(title) LIKE noaccent(?) OR noaccent(description) LIKE noaccent(?))")
+                params.extend([f"%{text_query}%", f"%{text_query}%"])
 
         where = " AND ".join(conditions)
         rows = conn.execute(
