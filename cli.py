@@ -3,22 +3,20 @@ Navi CLI — Cérebro Institucional
 
 Uso:
   python cli.py add <texto>        Adicionar nova memória
-   python cli.py correct <id> <texto>  Corrigir memória (com ID explícito)
-   python cli.py correct [-i ID] <texto>  Corrigir memória (ID opcional, infere se omitido)
+  python cli.py correct <id> <texto>  Corrigir memória (com ID explícito)
+  python cli.py correct [-i ID] <texto>  Corrigir memória (ID opcional, infere se omitido)
   python cli.py ask <pergunta>     Consultar memórias
   python cli.py search <termo>     Buscar memórias (sem LLM)
   python cli.py list [--type T] [--period YYYY-MM]  Listar memórias
   python cli.py get <id>           Ver detalhes de uma memória
-   python cli.py sync-docs          Sincronizar documentos
-   python cli.py provider [nome]    Ver/trocar provider (nvidia, bedrock, ollama)
-   python cli.py help               Mostrar esta ajuda
+  python cli.py sync-docs          Sincronizar documentos
+  python cli.py provider [nome]    Ver/trocar provider (nvidia, bedrock, ollama)
+  python cli.py help               Mostrar esta ajuda
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import json
 import re
 import sys
@@ -26,12 +24,11 @@ import textwrap
 from pathlib import Path
 
 from rich.console import Console
-from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.config import settings
-from app.models import Document, Preview
+from app.models import Preview
 from app.services.llm import create_provider
 from app.services.parser import ParserService
 from app.services.synthesizer import SynthesizerService
@@ -39,6 +36,8 @@ from app.services.ingestion import IngestionService
 from app.services.search import SearchService
 from app.storage.sqlite_store import SQLiteStore
 from app.storage.vector_store import VectorStore
+from app.db_viewer import _db_conn, cmd_db as db_cmd
+from app.doc_sync import cmd_sync_docs, _link_documents
 
 
 def get_services():
@@ -268,94 +267,17 @@ def cmd_correct(args, services):
         print("⏭️  Cancelado.")
 
 
-def _find_document_refs(text: str) -> list[str]:
-    patterns = [
-        r'doc[:\s]+([\w\-_.]+\.(?:txt|pdf|md))',
-        r'documento[:\s]+([\w\-_.]+\.(?:txt|pdf|md))',
-        r'arquivo[:\s]+([\w\-_.]+\.(?:txt|pdf|md))',
-    ]
-    refs = []
-    for pattern in patterns:
-        for m in re.finditer(pattern, text, re.IGNORECASE):
-            refs.append(m.group(1))
-    return refs
-
-
-def _link_documents(sqlite, text: str, memory_id: str, supersedes_id: str | None = None):
-    if supersedes_id:
-        seen = set()
-        chain = [supersedes_id]
-        depth = 0
-        while chain and depth < 50:
-            depth += 1
-            cur = chain.pop()
-            docs = sqlite.get_documents_by_memory(cur)
-            for d in docs:
-                if d.id not in seen:
-                    sqlite.link_memory_document(memory_id, d.id)
-                    seen.add(d.id)
-            mem = sqlite.get_memory(cur)
-            if mem and mem.supersedes_id and mem.supersedes_id not in seen:
-                chain.append(mem.supersedes_id)
-        if seen:
-            plural = "s" if len(seen) > 1 else ""
-            print(f"   🔗 Herdado(s) {len(seen)} vínculo{plural} de documento{plural} da cadeia de correção")
-
-    refs = _find_document_refs(text)
-    if not refs:
-        return
-    for ref in refs:
-        docs = sqlite.search_documents_by_filename(ref)
-        if docs:
-            doc_ids = set()
-            for d in docs:
-                sqlite.link_memory_document(memory_id, d.id)
-                doc_ids.add(d.id)
-            print(f"   📎 Vinculado ao documento: {docs[0].filename}"
-                  f"{' (+ {} chunk(s))'.format(len(doc_ids) - 1) if len(doc_ids) > 1 else ''}")
-        else:
-            resp = input(f"   ⚠️  Documento '{ref}' não encontrado. [a]dicionar / [p]ular / [e]ditar nome? (a/P/e): ").strip().lower()
-            if resp == "a":
-                print("   Use 'python cli.py sync-docs' após adicionar o arquivo em data/documents/")
-            elif resp == "e":
-                novo = input("      Nome correto do documento: ").strip()
-                if novo:
-                    docs = sqlite.search_documents_by_filename(novo)
-                    if docs:
-                        for d in docs:
-                            sqlite.link_memory_document(memory_id, d.id)
-                        print(f"   📎 Vinculado ao documento: {docs[0].filename}")
-                    else:
-                        print(f"   ⚠️  Documento '{novo}' também não encontrado.")
-            else:
-                print(f"   ⏭️  Vínculo com '{ref}' pulado.")
-
-
 def cmd_ask(args, services):
-    _, _, _, _, search, synthesizer = services
+    from app.services.ask_agent import AskAgent
+
+    _, vector, _, _, search, _ = services
     question = " ".join(args.text) if isinstance(args.text, list) else args.text
 
-    print("\n🔍 Buscando memórias relevantes...\n")
-    results = search.hybrid_search(
-        question,
-        top_k=5,
-        fact_type=args.type,
-        closing_period=args.period,
-    )
+    agent = AskAgent(search, vector)
 
-    if not results:
-        print("❌ Nenhuma memória encontrada.")
-        return
-
-    for r in results:
-        _print_result(r)
-
-    print("\n🤖 Sintetizando resposta...\n")
-    try:
-        answer = synthesizer.synthesize(question, results)
-        print(answer)
-    except Exception as e:
-        print(f"❌ Erro ao consultar LLM: {e}")
+    print()
+    for chunk in agent.ask(question):
+        print(chunk, end="", flush=True)
     print()
 
 
@@ -426,75 +348,6 @@ def cmd_get(args, services):
         print(f"\n   📎 Documentos relacionados ({len(docs)}):")
         for d in docs:
             print(f"      - {d.title} ({d.filename})")
-
-
-def cmd_sync_docs(args, services):
-    sqlite, vector, _, _, _, _ = services
-    docs_path = Path(settings.documents_path)
-    docs_path.mkdir(parents=True, exist_ok=True)
-
-    files = []
-    for ext in ("*.pdf", "*.txt", "*.md"):
-        files.extend(docs_path.glob(ext))
-
-    if not files:
-        print("📂 Nenhum documento encontrado em data/documents/")
-        return
-
-    print(f"\n📂 Processando {len(files)} arquivo(s)...\n")
-
-    for filepath in files:
-        if sqlite.document_exists(filepath.name):
-            print(f"  ⏭️  {filepath.name} já processado, pulando.")
-            continue
-
-        print(f"  📄 {filepath.name}...", end=" ")
-
-        source_type = filepath.suffix.lstrip(".")
-        title = filepath.stem
-        content = ""
-
-        if source_type == "pdf":
-            try:
-                from pypdf import PdfReader
-                reader = PdfReader(str(filepath))
-                content = "\n".join(page.extract_text() or "" for page in reader.pages)
-            except Exception as e:
-                print(f"erro: {e}")
-                continue
-        else:
-            content = filepath.read_text(encoding="utf-8", errors="replace")
-
-        chunk_size = 1500
-        chunks = [
-            content[i : i + chunk_size]
-            for i in range(0, len(content), chunk_size)
-        ]
-
-        for ci, chunk in enumerate(chunks):
-            doc = Document(
-                filename=filepath.name,
-                source_type=source_type,
-                title=title,
-                content=chunk,
-                chunk_index=ci,
-            )
-            sqlite.insert_document(doc)
-            vector.add_document(
-                doc_id=doc.id,
-                title=title,
-                content=chunk,
-                metadata={
-                    "document_id": doc.id,
-                    "title": title,
-                    "source_type": source_type,
-                    "chunk_index": ci,
-                },
-            )
-
-        print(f"ok ({len(chunks)} chunk(s))")
-
-    print("\n✅ Sincronização concluída!")
 
 
 def _show_preview(preview: Preview):
@@ -580,304 +433,6 @@ def cmd_provider(args, services):
     print("   Reinicie o CLI para aplicar as mudanças.\n")
 
 
-def _db_conn():
-    import sqlite3
-    conn = sqlite3.connect(settings.sqlite_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _db_memories(conn, show_all: bool = False, limit: int = 100):
-    if show_all:
-        rows = conn.execute(
-            "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM memories WHERE is_active = 1 ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return rows
-
-
-def _db_table(console: Console, title: str, columns: list[str], rows: list[tuple]):
-    table = Table(title=title, title_style="bold cyan", border_style="dim")
-    for col in columns:
-        table.add_column(col, style="white", no_wrap=(col in ("ID", "Período", "Tipo", "Ativo", "Chunks")))
-    for row in rows:
-        table.add_row(*[str(v) if v is not None else "—" for v in row])
-    console.print(table)
-
-
-def cmd_db(args, services):
-    import sqlite3
-
-    conn = _db_conn()
-    parts = args.command_db
-    force = "--force" in parts
-    parts = [p for p in parts if p != "--force"]
-    cmd = parts[0] if parts else None
-    extra = parts[1:] if len(parts) > 1 else []
-
-    if cmd == "tables":
-        console = Console()
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        ).fetchall()
-        table = Table(title="Tabelas", title_style="bold cyan", border_style="dim")
-        table.add_column("Tabela", style="green")
-        table.add_column("SQL (CREATE)", style="dim", max_width=80)
-        for r in rows:
-            name = r["name"]
-            sql = conn.execute(
-                f"SELECT sql FROM sqlite_master WHERE name = ?", (name,)
-            ).fetchone()
-            create_sql = sql["sql"] if sql and sql["sql"] else ""
-            table.add_row(name, create_sql)
-        console.print(table)
-
-    elif cmd == "memories":
-        console = Console()
-        rows = _db_memories(conn, show_all=args.all, limit=args.limit or 100)
-        if not rows:
-            console.print("[yellow]Nenhuma memória encontrada.[/yellow]")
-            return
-        _db_table(console, f"Memórias ({len(rows)} registro(s))", ["ID", "Título", "Tipo", "Período", "Ativo", "Substituído por"], [
-            (r["id"][:8], r["title"][:45], r["fact_type"], r["closing_period"],
-             "✅" if r["is_active"] else "❌",
-             r["superseded_by"][:8] if r["superseded_by"] else "—")
-            for r in rows
-        ])
-
-    elif cmd == "documents":
-        console = Console()
-        rows = conn.execute(
-            "SELECT id, filename, source_type, title, chunk_index, substr(content, 1, 60) as preview FROM documents ORDER BY filename, chunk_index LIMIT ?",
-            (args.limit or 100,),
-        ).fetchall()
-        if not rows:
-            console.print("[yellow]Nenhum documento encontrado.[/yellow]")
-            return
-        _db_table(console, f"Documentos ({len(rows)} chunk(s))", ["ID", "Arquivo", "Tipo", "Chunk", "Preview"], [
-            (r["id"][:8], r["filename"], r["source_type"], str(r["chunk_index"]), r["preview"])
-            for r in rows
-        ])
-
-    elif cmd == "links":
-        console = Console()
-        rows = conn.execute(
-            """SELECT md.memory_id, m.title as mem_title, m.is_active,
-                      md.document_id, d.filename as doc_name
-               FROM memory_documents md
-               JOIN memories m ON m.id = md.memory_id
-               JOIN documents d ON d.id = md.document_id
-               LIMIT ?""",
-            (args.limit or 100,),
-        ).fetchall()
-        if not rows:
-            console.print("[yellow]Nenhum vínculo encontrado.[/yellow]")
-            return
-        _db_table(console, f"Vínculos Memória ↔ Documento ({len(rows)})", ["Memória", "Título", "Ativa", "Documento", "Arquivo"], [
-            (r["memory_id"][:8], r["mem_title"][:40], "✅" if r["is_active"] else "❌", r["document_id"][:8], r["doc_name"])
-            for r in rows
-        ])
-
-    elif cmd == "memory":
-        entry_id = extra[0] if extra else None
-        if not entry_id:
-            Console().print("[red]Informe o ID da memória: db memory <id>[/red]")
-            return
-        console = Console()
-        row = conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (entry_id,)
-        ).fetchone()
-        if not row and len(entry_id) >= 8:
-            rows = conn.execute(
-                "SELECT * FROM memories WHERE id LIKE ? || '%'", (entry_id,)
-            ).fetchall()
-            if len(rows) == 1:
-                row = rows[0]
-            elif len(rows) > 1:
-                matches = ", ".join(r["id"][:8] for r in rows[:5])
-                console.print(f"[red]Prefixo '{entry_id}' é ambíguo. IDs: {matches}[/red]")
-                console.print("[red]Use o ID completo (8+ caracteres).[/red]")
-                return
-        if not row:
-            console.print(f"[red]Memória {entry_id} não encontrada.[/red]")
-            return
-        console.print(f"\n[bold cyan]📌 Memória: {row['title']}[/bold cyan]")
-        console.print(f"   [dim]ID:[/dim] {row['id']}")
-        console.print(f"   [dim]Tipo:[/dim] {row['fact_type']}")
-        console.print(f"   [dim]Período:[/dim] {row['closing_period']}")
-        console.print(f"   [dim]Ativo:[/dim] {'✅ Sim' if row['is_active'] else '❌ Não'}")
-        console.print(f"   [dim]Registrado por:[/dim] {row['registered_by']}")
-        console.print(f"   [dim]Data registro:[/dim] {row['registration_date'][:19]}")
-        console.print(f"   [dim]Criado em:[/dim] {row['created_at'][:19]}")
-        console.print(f"   [dim]Atualizado em:[/dim] {row['updated_at'][:19]}")
-        console.print(f"   [dim]Decidido por:[/dim] {row['decided_by'] or '—'}")
-        console.print(f"   [dim]Solicitado por:[/dim] {row['requested_by'] or '—'}")
-        console.print(f"   [dim]Aprovado por:[/dim] {row['approved_by'] or '—'}")
-        if row["supersedes_id"]:
-            console.print(f"   [dim]Substitui:[/dim] {row['supersedes_id']}")
-        if row["superseded_by"]:
-            console.print(f"   [dim]Substituído por:[/dim] {row['superseded_by']}")
-        if row["metadata"]:
-            console.print(f"   [dim]Metadados:[/dim] {row['metadata']}")
-        console.print(f"\n   [bold]Descrição:[/bold]")
-        console.print(textwrap.indent(row["description"], "      "))
-        docs = conn.execute(
-            "SELECT d.title, d.filename FROM documents d JOIN memory_documents md ON d.id = md.document_id WHERE md.memory_id = ?",
-            (row["id"],),
-        ).fetchall()
-        if docs:
-            console.print(f"\n   [bold]📎 Documentos relacionados:[/bold]")
-            for d in docs:
-                console.print(f"      - {d['title']} ({d['filename']})")
-        print()
-
-    elif cmd == "document":
-        entry_id = extra[0] if extra else None
-        if not entry_id:
-            Console().print("[red]Informe o ID do documento: db document <id>[/red]")
-            return
-        console = Console()
-        row = conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (entry_id,)
-        ).fetchone()
-        if not row:
-            console.print(f"[red]Documento {entry_id} não encontrado.[/red]")
-            return
-        console.print(f"\n[bold cyan]📄 Documento: {row['title']}[/bold cyan]")
-        console.print(f"   [dim]ID:[/dim] {row['id']}")
-        console.print(f"   [dim]Arquivo:[/dim] {row['filename']}")
-        console.print(f"   [dim]Tipo:[/dim] {row['source_type']}")
-        console.print(f"   [dim]Chunk:[/dim] {row['chunk_index']}")
-        console.print(f"   [dim]Criado em:[/dim] {row['created_at'][:19]}")
-        console.print(f"\n   [bold]Conteúdo:[/bold]")
-        console.print(textwrap.indent(row["content"], "      "))
-        print()
-
-    elif cmd == "export":
-        fmt = extra[0] if extra else args.format
-        out_dir = Path(settings.sqlite_path).parent / "export"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        tables_info = [
-            ("memories", "SELECT * FROM memories ORDER BY created_at DESC"),
-            ("documents", "SELECT * FROM documents ORDER BY filename, chunk_index"),
-            ("memory_documents", "SELECT * FROM memory_documents"),
-        ]
-        if fmt == "json":
-            for name, sql in tables_info:
-                rows = conn.execute(sql).fetchall()
-                data = [dict(r) for r in rows]
-                if name == "memories":
-                    for d in data:
-                        if "metadata" in d and d["metadata"]:
-                            try:
-                                d["metadata"] = json.loads(d["metadata"])
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                filepath = out_dir / f"{name}.json"
-                filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-            print(f"✅ Export JSON salvo em: {out_dir}")
-        elif fmt == "csv":
-            for name, sql in tables_info:
-                rows = conn.execute(sql).fetchall()
-                if not rows:
-                    continue
-                filepath = out_dir / f"{name}.csv"
-                with open(filepath, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(rows[0].keys())
-                    for r in rows:
-                        writer.writerow([str(v) if v is not None else "" for v in r])
-            print(f"✅ Export CSV salvo em: {out_dir}")
-
-    elif cmd == "help":
-        pad = 25
-        Console().print(
-            "\n[bold cyan]🗄️  Navi — Database Viewer[/bold cyan]\n"
-            f"  [cyan]db[/cyan]{" " * (pad - 2)} — Dashboard com contagens\n"
-            f"  [cyan]db help[/cyan]{" " * (pad - 7)} — Mostrar esta ajuda\n"
-            f"  [cyan]db tables[/cyan]{" " * (pad - 9)} — Listar tabelas com schema SQL\n"
-            f"  [cyan]db memories[/cyan]{" " * (pad - 11)} — Listar memórias ativas\n"
-            f"  [cyan]db memories --all[/cyan]{" " * (pad - 17)} — Listar todas (ativas e inativas)\n"
-            f"  [cyan]db documents[/cyan]{" " * (pad - 12)} — Listar documentos/chunks\n"
-            f"  [cyan]db links[/cyan]{" " * (pad - 8)} — Vínculos memória ↔ documento\n"
-            f"  [cyan]db memory <id>[/cyan]{" " * (pad - 14)} — Detalhes completos de uma memória\n"
-            f"  [cyan]db document <id>[/cyan]{" " * (pad - 16)} — Conteúdo completo de um documento\n"
-            f"  [cyan]db export json[/cyan]{" " * (pad - 14)} — Exportar tudo para JSON\n"
-            f"  [cyan]db export csv[/cyan]{" " * (pad - 13)} — Exportar tudo para CSV\n"
-            f"  [cyan]db query <sql>[/cyan]{" " * (pad - 14)} — Executar SELECT\n"
-            f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 22)} — Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
-        )
-
-    elif cmd == "query":
-        sql = " ".join(extra) if extra else None
-        if not sql:
-            Console().print("[red]Informe a SQL: db query <sql>[/red]")
-            return
-        if not sql.strip().upper().startswith("SELECT") and not force:
-            Console().print("[red]Apenas consultas SELECT são permitidas. Use --force para executar mesmo assim.[/red]")
-            return
-        if force and not sql.strip().upper().startswith("SELECT"):
-            conf = input("\n⚠️  Você está prestes a executar um comando de escrita no banco. Tem certeza? (s/N): ").strip().lower()
-            if conf != "s":
-                Console().print("[yellow]Comando cancelado.[/yellow]")
-                return
-        console = Console()
-        try:
-            cursor = conn.execute(sql)
-            rows = cursor.fetchall()
-            if not rows:
-                console.print("[yellow]Nenhum resultado.[/yellow]")
-            else:
-                columns = [desc[0] for desc in cursor.description]
-                _db_table(console, f"Query ({len(rows)} resultado(s))", columns, [tuple(r) for r in rows])
-        except sqlite3.Error as e:
-            console.print(f"[red]Erro SQL: {e}[/red]")
-
-    else:
-        console = Console()
-        counts = {}
-        for name in ("memories", "documents", "memory_documents"):
-            row = conn.execute(f"SELECT COUNT(*) as c FROM {name}").fetchone()
-            counts[name] = row["c"]
-        active = conn.execute("SELECT COUNT(*) as c FROM memories WHERE is_active = 1").fetchone()["c"]
-        inactive = conn.execute("SELECT COUNT(*) as c FROM memories WHERE is_active = 0").fetchone()["c"]
-
-        console.print("\n[bold cyan]🗄️  Navi — Database Dashboard[/bold cyan]")
-        console.print(f"   [dim]Banco:[/dim] {settings.sqlite_path}")
-        console.print()
-        table = Table(title="Contagens", border_style="dim")
-        table.add_column("Tabela", style="green")
-        table.add_column("Registros", style="white", justify="right")
-        table.add_row("memories (total)", str(counts["memories"]))
-        table.add_row("  ├ ativas", str(active))
-        table.add_row("  └ inativas", str(inactive))
-        table.add_row("documents", str(counts["documents"]))
-        table.add_row("memory_documents", str(counts["memory_documents"]))
-        console.print(table)
-        console.print()
-        console.print("[dim]Comandos disponíveis:[/dim]")
-        pad = 25
-        console.print(f"  [cyan]db tables[/cyan]{" " * (pad - 9)} — Listar tabelas com schema")
-        console.print(f"  [cyan]db memories[/cyan]{" " * (pad - 11)} — Listar memórias ativas")
-        console.print(f"  [cyan]db memories --all[/cyan]{" " * (pad - 17)} — Listar todas (ativas e inativas)")
-        console.print(f"  [cyan]db documents[/cyan]{" " * (pad - 12)} — Listar documentos")
-        console.print(f"  [cyan]db links[/cyan]{" " * (pad - 8)} — Vínculos memória ↔ documento")
-        console.print(f"  [cyan]db memory <id>[/cyan]{" " * (pad - 14)} — Detalhes de uma memória")
-        console.print(f"  [cyan]db document <id>[/cyan]{" " * (pad - 16)} — Detalhes de um documento")
-        console.print(f"  [cyan]db export json[/cyan]{" " * (pad - 14)} — Exportar tudo para JSON")
-        console.print(f"  [cyan]db export csv[/cyan]{" " * (pad - 13)} — Exportar tudo para CSV")
-        console.print(f"  [cyan]db query <sql>[/cyan]{" " * (pad - 14)} — Executar SELECT")
-        console.print(f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 22)} — Executar qualquer SQL (DML)")
-        print()
-
-    conn.close()
-
-
 def _cli_help():
     pad = 23
     Console().print(
@@ -956,15 +511,24 @@ def main():
         "get": cmd_get,
         "sync-docs": cmd_sync_docs,
         "provider": cmd_provider,
-        "db": cmd_db,
         "help": lambda a, s: _cli_help(),
     }
 
-    if args.command in ("provider", "db", "help"):
+    if args.command == "db":
+        conn = _db_conn()
+        try:
+            db_cmd(conn, args.command_db, args.all, args.limit, args.format)
+        finally:
+            conn.close()
+    elif args.command in ("provider", "help"):
         commands[args.command](args, None)
     else:
         services = get_services()
-        commands[args.command](args, services)
+        if args.command == "sync-docs":
+            sqlite, vector, _, _, _, _ = services
+            cmd_sync_docs(sqlite, vector)
+        else:
+            commands[args.command](args, services)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,18 @@
+REGRAS DE COMPLIANCE PARA AGÊNCIAS - GF BANK
+Versão 1.0 - Vigência: Junho/2026
+
+1. OBRIGAÇÕES MENSAIS
+   - Envio de relatório de transações suspeitas até dia 10
+   - Atualização cadastral de clientes com movimentação acima de R$ 10.000
+   - Verificação de PEP (Pessoa Exposta Politicamente) em novos cadastros
+
+2. PENALIDADES
+   - Descumprimento de prazo: advertência formal na primeira ocorrência
+   - Reincidência: suspensão do gerente responsável por 15 dias
+   - Falha grave (não reportar transação suspeita): demissão por justa causa
+
+3. DOCUMENTAÇÃO EXIGIDA
+   - Contrato social para PJ
+   - RG e CPF para PF
+   - Comprovante de residência atualizado (até 90 dias)
+   - Declaração de origem dos recursos para movimentações > R$ 50.000

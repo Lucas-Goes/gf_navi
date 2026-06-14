@@ -1,0 +1,21 @@
+ANEXO TÉCNICO - POLÍTICA DE CRÉDITO PJ - GF BANK
+Atualização: Julho/2026
+
+1. EXCEÇÕES AO LIMITE AUTOMÁTICO
+   Para empresas classificadas como "Alto Risco" (score Serasa < 300):
+   - Micro: limite reduzido para R$ 15.000 com aval
+   - Pequena: limite reduzido para R$ 60.000 com aval + alienação
+
+2. MOEDAS E INDEXADORES
+   Operações em dólar: Selic + spread fixo de 2% a.a.
+   Operações em real: conforme tabela do documento principal
+
+3. DOCUMENTAÇÃO OBRIGATÓRIA
+   - Contrato social e alterações (atualizado últimos 6 meses)
+   - Balanço patrimonial dos últimos 2 anos
+   - Declaração de faturamento assinada por contador
+   - Certidões negativas federais, estaduais e municipais
+
+4. VIGÊNCIA
+   Este anexo entra em vigor em 01/07/2026 e substitui as disposições
+   do documento principal para empresas classificadas como Alto Risco.

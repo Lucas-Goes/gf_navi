@@ -1,0 +1,47 @@
+[
+  {
+    "id": "7ccbf9f0-8a57-4d87-9c3f-1099b647b20a",
+    "filename": "anexo_credito_pj_financas.txt",
+    "source_type": "txt",
+    "title": "anexo_credito_pj_financas",
+    "content": "ANEXO TÉCNICO - POLÍTICA DE CRÉDITO PJ - GF BANK\nAtualização: Julho/2026\n\n1. EXCEÇÕES AO LIMITE AUTOMÁTICO\n   Para empresas classificadas como \"Alto Risco\" (score Serasa < 300):\n   - Micro: limite reduzido para R$ 15.000 com aval\n   - Pequena: limite reduzido para R$ 60.000 com aval + alienação\n\n2. MOEDAS E INDEXADORES\n   Operações em dólar: Selic + spread fixo de 2% a.a.\n   Operações em real: conforme tabela do documento principal\n\n3. DOCUMENTAÇÃO OBRIGATÓRIA\n   - Contrato social e alterações (atualizado últimos 6 meses)\n   - Balanço patrimonial dos últimos 2 anos\n   - Declaração de faturamento assinada por contador\n   - Certidões negativas federais, estaduais e municipais\n\n4. VIGÊNCIA\n   Este anexo entra em vigor em 01/07/2026 e substitui as disposições\n   do documento principal para empresas classificadas como Alto Risco.\n",
+    "chunk_index": 0,
+    "created_at": "2026-06-14T02:25:16.308460+00:00"
+  },
+  {
+    "id": "11dc53f1-a14a-4dda-b936-6fed4c126a70",
+    "filename": "modulo_cadastro_agencias_gf.txt",
+    "source_type": "txt",
+    "title": "modulo_cadastro_agencias_gf",
+    "content": "Processo de cadastro de agencias GF. Regra: agencias com faturamento acima de 500k aprovacao direta, abaixo necessita diretoria.\n",
+    "chunk_index": 0,
+    "created_at": "2026-06-14T02:20:26.838175+00:00"
+  },
+  {
+    "id": "a52ec909-e4ae-4af4-962c-719673149d6e",
+    "filename": "politica_credito_pj.txt",
+    "source_type": "txt",
+    "title": "politica_credito_pj",
+    "content": "POLÍTICA DE CRÉDITO PARA PESSOA JURÍDICA - GF BANK\nVersão 2.1 - Vigência: Junho/2026\n\n1. LIMITES POR PORTE\n   - Microempresa (faturamento até 360k/ano): limite automático de R$ 50.000\n   - Pequena empresa (360k a 4,8M/ano): limite automático de R$ 200.000\n   - Média empresa (4,8M a 300M/ano): análise de crédito expedita, limite variável\n   - Grande empresa (acima de 300M/ano): análise completa, comitê de crédito\n\n2. GARANTIAS EXIGIDAS\n   - Micro: sem garantia\n   - Pequena: aval dos sócios\n   - Média: aval + alienação de bens\n   - Grande: aval + garantia real\n\n3. TAXAS DE REFERÊNCIA\n   - Micro: Selic + 4% a.m.\n   - Pequena: Selic + 3% a.m.\n   - Média: Selic + 2% a.m.\n   - Grande: Selic + 1.5% a.m.\n\n4. PRAZOS MÁXIMOS\n   - Capital de giro: 24 meses\n   - Investimento fixo: 60 meses\n   - Antecipação de recebíveis: 12 meses\n",
+    "chunk_index": 0,
+    "created_at": "2026-06-14T02:24:47.634694+00:00"
+  },
+  {
+    "id": "42d56ce5-8078-4a85-a632-c0899aced9a1",
+    "filename": "politica_taxas_cambio.txt",
+    "source_type": "txt",
+    "title": "politica_taxas_cambio",
+    "content": "POLÍTICA DE TAXAS DE CÂMBIO - GF BANK\nVersão 3.2 - Vigência: Julho/2026\n\n1. SPREADS POR SEGMENTO\n   - Pessoa Física: spread mínimo de 2.5%\n   - Pessoa Jurídica: spread mínimo de 1.8%\n   - Corporate (acima de USD 1M): spread negociável a partir de 0.8%\n\n2. ATUALIZAÇÃO DE TAXAS\n   - Taxas comerciais: atualizadas diariamente às 10h\n   - Taxas turismo: atualizadas semanalmente às segundas-feiras\n   - Taxas especiais (clientes corporate): sob consulta\n\n3. LIMITES SEM DOCUMENTAÇÃO\n   - PF: até USD 5.000 por operação\n   - PJ: até USD 50.000 por operação\n   - Acima destes limites: exigida documentação de origem\n\n4. OPERAÇÕES ESPECIAIS\n   - Operações com derivativos cambiais: aprovadas pelo Comitê de Riscos\n   - Hedge cambial para exportadores: taxa reduzida em 0.5%\n",
+    "chunk_index": 0,
+    "created_at": "2026-06-14T03:40:27.330532+00:00"
+  },
+  {
+    "id": "9991cd24-2a80-4794-8767-1fa7370f6052",
+    "filename": "regra_compliance_agencias.txt",
+    "source_type": "txt",
+    "title": "regra_compliance_agencias",
+    "content": "REGRAS DE COMPLIANCE PARA AGÊNCIAS - GF BANK\nVersão 1.0 - Vigência: Junho/2026\n\n1. OBRIGAÇÕES MENSAIS\n   - Envio de relatório de transações suspeitas até dia 10\n   - Atualização cadastral de clientes com movimentação acima de R$ 10.000\n   - Verificação de PEP (Pessoa Exposta Politicamente) em novos cadastros\n\n2. PENALIDADES\n   - Descumprimento de prazo: advertência formal na primeira ocorrência\n   - Reincidência: suspensão do gerente responsável por 15 dias\n   - Falha grave (não reportar transação suspeita): demissão por justa causa\n\n3. DOCUMENTAÇÃO EXIGIDA\n   - Contrato social para PJ\n   - RG e CPF para PF\n   - Comprovante de residência atualizado (até 90 dias)\n   - Declaração de origem dos recursos para movimentações > R$ 50.000\n",
+    "chunk_index": 0,
+    "created_at": "2026-06-14T03:40:27.461614+00:00"
+  }
+]

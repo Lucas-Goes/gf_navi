@@ -265,7 +265,7 @@ sendBtn.click();
 }
 });
 
-sendBtn.addEventListener('click', () => {
+async function sendMessage() {
 if (chatInput.value.trim() === '') return;
 
 const msg = chatInput.value;
@@ -288,65 +288,66 @@ chatInput.value = '';
 chatInput.style.height = 'auto';
 messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-setTimeout(() => {
-const naviResponses = [
-  `Ótimo! **Entendi sua mensagem** e já estou analisando. ✨
+const naviBubbleHtml = `
+<div class="flex flex-col gap-2 max-w-[80%] mb-8 bubble-enter" style="margin-right: auto;">
+  <div class="flex items-center gap-3 ml-1">
+    <div class="w-8 h-8 rounded-full bg-fairy/20 flex items-center justify-center ring-1 ring-fairy/30 overflow-hidden">
+      <img src="logo.png" alt="Navi" class="w-7 h-7 object-contain opacity-60" style="margin-top: 4px;" />
+    </div>
+    <span class="text-[11px] tracking-widest text-fairy/80 uppercase" style="font-family: 'Space Grotesk', sans-serif;">Navi <span class="opacity-40 ml-2 font-body italic lowercase">${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, '0')}</span></span>
+  </div>
+  <div class="glass-bubble-ai p-6 rounded-3xl rounded-tl-none relative" style="overflow-wrap: break-word; word-break: break-word;">
+    <div class="prose prose-sm max-w-none text-warm-text/90 leading-relaxed text-lg navi-content">
+    </div>
+  </div>
+</div>
+`;
 
-Aqui estão alguns pontos que posso te ajudar:
+messagesContainer.insertAdjacentHTML('beforeend', naviBubbleHtml);
+messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-- **Análise** do que você precisa
-- **Sugestões** personalizadas
-- **Exemplos** práticos
+const naviContent = messagesContainer.lastElementChild?.querySelector('.navi-content');
+if (!naviContent) return;
+naviContent.innerHTML = '<p class="text-warm-text/70 italic">Processando...</p>';
 
-\`\`\`python
-# Exemplo de análise
-def analisar(mensagem):
-    return f"Processei: {mensagem}"
-\`\`\`
+const xhr = new XMLHttpRequest();
+xhr.open('POST', '/api/chat', true);
+xhr.setRequestHeader('Content-Type', 'application/json');
 
-> Fique à vontade para perguntar mais! 🌟`,
-  `Recebi sua mensagem! Deixa eu ver aqui... 🌟
+let fullText = '';
 
-Processando com **carinho**! Aqui vai uma prévia:
-
-\`\`\`javascript
-// Resposta inteligente
-const navi = {
-  status: "pronta",
-  missao: "ajudar você"
+xhr.onprogress = function () {
+  const text = xhr.responseText;
+  const lines = text.split('\n');
+  fullText = '';
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.done) break;
+        if (data.text) fullText += data.text;
+      } catch (e) {}
+    }
+  }
+  if (fullText) {
+    naviContent.innerHTML = parseMarkdown(fullText);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    highlightCode();
+  }
 };
-console.log(\`Navi \${navi.status}\`);
-\`\`\`
 
-📌 **Dica**: Quanto mais detalhes você der, melhor posso ajudar!`,
-  `Maravilha! **Já sei o que fazer**! 🚀
+xhr.onloadend = function () {
+  if (xhr.status !== 200) {
+    naviContent.innerHTML = '<p class="text-red-400">Erro ao conectar com o servidor.</p>';
+  }
+};
 
-Aqui está um resumo do que pensei:
-
-1. **Analisar** seu contexto
-2. **Buscar** as melhores soluções  
-3. **Apresentar** de forma clara
-
-\`\`\`typescript
-interface Resposta {
-  mensagem: string;
-  confianca: number;
+xhr.send(JSON.stringify({ question: msg }));
 }
 
-const resposta: Resposta = {
-  mensagem: "Pronta para ajudar!",
-  confianca: 0.99
-};
-\`\`\`
-
-✨ Sempre aqui para o que precisar!`
-];
-
-// Simple markdown parser
 function parseMarkdown(md) {
   let html = md;
 
-  // Code blocks (must process first)
   html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
     const language = lang || 'plaintext';
     const escaped = code
@@ -356,22 +357,12 @@ function parseMarkdown(md) {
     return `<pre><code class="language-${language}">${escaped}</code></pre>`;
   });
 
-  // Bold
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Italic (single * or _)
   html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-  // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // Blockquotes
   html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // Lists
   html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
   html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-  // Wrap consecutive <li> in <ul> or <ol>
   html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => {
     if (match.includes('<li>1.') || match.includes('<li>2.')) {
       return '<ol>' + match + '</ol>';
@@ -379,7 +370,6 @@ function parseMarkdown(md) {
     return '<ul>' + match + '</ul>';
   });
 
-  // Paragraphs (wrap text that's not already wrapped)
   const lines = html.split('\n');
   const wrapped = [];
   let inBlock = false;
@@ -404,50 +394,19 @@ function parseMarkdown(md) {
   return html;
 }
 
-// Simple syntax highlighter (minimal)
 function highlightCode() {
   document.querySelectorAll('pre code').forEach(block => {
     const text = block.textContent;
-    const lang = block.className.replace('language-', '');
-    
+
     let highlighted = text
-      // Comments
       .replace(/(\/\/.*|\/\*[\s\S]*?\*\/)/g, '<span class="hljs-comment">$1</span>')
-      // Strings
       .replace(/(".*?"|'.*?'|`.*?`)/g, '<span class="hljs-string">$1</span>')
-      // Keywords
       .replace(/\b(const|let|var|function|return|if|else|for|while|class|interface|type|import|export|from|async|await|console\.log)\b/g, '<span class="hljs-keyword">$1</span>')
-      // Types
       .replace(/\b(string|number|boolean|void|any|interface|type)\b/g, '<span class="hljs-type">$1</span>')
-      // Numbers
       .replace(/\b(\d+\.?\d*)\b/g, '<span class="hljs-number">$1</span>');
 
     block.innerHTML = highlighted;
   });
 }
 
-const randomIndex = Math.floor(Math.random() * naviResponses.length);
-const markdown = naviResponses[randomIndex];
-let rendered = parseMarkdown(markdown);
-
-const responseHtml = `
-<div class="flex flex-col gap-2 max-w-[80%] mb-8 bubble-enter" style="margin-right: auto;">
-  <div class="flex items-center gap-3 ml-1">
-    <div class="w-8 h-8 rounded-full bg-fairy/20 flex items-center justify-center ring-1 ring-fairy/30 overflow-hidden">
-      <img src="logo.png" alt="Navi" class="w-7 h-7 object-contain opacity-60" style="margin-top: 4px;" />
-    </div>
-    <span class="text-[11px] tracking-widest text-fairy/80 uppercase" style="font-family: 'Space Grotesk', sans-serif;">Navi <span class="opacity-40 ml-2 font-body italic lowercase">${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, '0')}</span></span>
-  </div>
-  <div class="glass-bubble-ai p-6 rounded-3xl rounded-tl-none relative" style="overflow-wrap: break-word; word-break: break-word;">
-    <div class="prose prose-sm max-w-none text-warm-text/90 leading-relaxed text-lg [&_code]:bg-warm-text/10 [&_code]:px-2 [&_code]:py-0.5 [&_code]:rounded-lg [&_code]:text-sm [&_pre]:bg-warm-text/5 [&_pre]:p-4 [&_pre]:rounded-2xl [&_pre]:overflow-x-auto [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_blockquote]:border-l-2 [&_blockquote]:border-fairy/30 [&_blockquote]:pl-4 [&_blockquote]:text-warm-muted [&_blockquote]:italic [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:text-base [&_h3]:font-medium [&_strong]:text-warm-text [&_a]:text-fairy [&_a]:underline [&_a:hover]:opacity-80>
-      ${rendered}
-    </div>
-  </div>
-</div>
-`;
-messagesContainer.insertAdjacentHTML('beforeend', responseHtml);
-messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-highlightCode();
-}, 800);
-});
+sendBtn.addEventListener('click', sendMessage);

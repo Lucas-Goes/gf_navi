@@ -1,0 +1,25 @@
+POLÍTICA DE CRÉDITO PARA PESSOA JURÍDICA - GF BANK
+Versão 2.1 - Vigência: Junho/2026
+
+1. LIMITES POR PORTE
+   - Microempresa (faturamento até 360k/ano): limite automático de R$ 50.000
+   - Pequena empresa (360k a 4,8M/ano): limite automático de R$ 200.000
+   - Média empresa (4,8M a 300M/ano): análise de crédito expedita, limite variável
+   - Grande empresa (acima de 300M/ano): análise completa, comitê de crédito
+
+2. GARANTIAS EXIGIDAS
+   - Micro: sem garantia
+   - Pequena: aval dos sócios
+   - Média: aval + alienação de bens
+   - Grande: aval + garantia real
+
+3. TAXAS DE REFERÊNCIA
+   - Micro: Selic + 4% a.m.
+   - Pequena: Selic + 3% a.m.
+   - Média: Selic + 2% a.m.
+   - Grande: Selic + 1.5% a.m.
+
+4. PRAZOS MÁXIMOS
+   - Capital de giro: 24 meses
+   - Investimento fixo: 60 meses
+   - Antecipação de recebíveis: 12 meses

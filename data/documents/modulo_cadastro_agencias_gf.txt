@@ -1,0 +1,1 @@
+Processo de cadastro de agencias GF. Regra: agencias com faturamento acima de 500k aprovacao direta, abaixo necessita diretoria.
