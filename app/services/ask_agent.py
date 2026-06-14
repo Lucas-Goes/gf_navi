@@ -6,6 +6,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Generator
 
+import requests
+
 from app.config import settings
 from app.models import FactType
 from app.services.ingestion import IngestionService
@@ -380,6 +382,11 @@ TOOL_DEFINITIONS = {
         "params": {},
         "fn": _sync_documents,
     },
+    "help": {
+        "description": "Mostrar a lista de ferramentas disponíveis e como usar o assistente. Use quando o usuário pedir ajuda, help, o que você pode fazer, quais são suas funções.",
+        "params": {},
+        "fn": lambda: {"tools": list(TOOL_DEFINITIONS.keys())},
+    },
 }
 
 
@@ -397,12 +404,22 @@ def _format_tool_descriptions() -> str:
 
 def _call_llm(prompt: str, system: str = "", max_tokens: int = 1000) -> str:
     llm = _get_llm()
-    return llm.invoke(prompt=prompt, system_prompt=system, max_tokens=max_tokens, temperature=0.1)
+    try:
+        return llm.invoke(prompt=prompt, system_prompt=system, max_tokens=max_tokens, temperature=0.1)
+    except requests.exceptions.Timeout:
+        raise RuntimeError("O serviço LLM não respondeu a tempo. Verifique se a API key é válida ou tente outro provedor.")
+    except Exception as e:
+        raise RuntimeError(f"Erro no LLM: {e}")
 
 
 def _call_llm_stream(prompt: str, system: str = "", max_tokens: int = 2000) -> Generator[str, None, None]:
     llm = _get_llm()
-    yield from llm.invoke_stream(prompt=prompt, system_prompt=system, max_tokens=max_tokens, temperature=0.3)
+    try:
+        yield from llm.invoke_stream(prompt=prompt, system_prompt=system, max_tokens=max_tokens, temperature=0.3)
+    except requests.exceptions.Timeout:
+        yield "\n\n❌ O serviço LLM não respondeu a tempo. Verifique se a API key é válida ou tente outro provedor."
+    except Exception as e:
+        yield f"\n\n❌ Erro no LLM: {e}"
 
 
 def _select_tool(question: str) -> tuple[str, dict] | None:
@@ -460,24 +477,48 @@ class AskAgent:
         self.search = search
         self.vector = vector
 
+    def _route_question(self, question: str) -> tuple[str, dict] | None:
+        q = question.lower().strip()
+
+        help_words = ["help", "ajuda", "pode fazer", "ferramentas", "funções", "o que você",
+                      "como funciona", "capacidades", "comandos"]
+        if any(w in q for w in help_words):
+            return ("help", {})
+
+        add_words = ["adiciona", "adicione", "cria", "crie", "registra", "insere",
+                     "nova memória", "novo registro", "adicionar memória", "criar memória"]
+        if any(w in q for w in add_words):
+            return ("add_memory", {"text": question})
+
+        correct_words = ["corrige", "corrija", "corrigir", "atualiza", "altera",
+                         "modifica", "muda", "correção", "corrigir memória"]
+        if any(w in q for w in correct_words):
+            return ("correct_memory", {"text": question})
+
+        return None
+
     def ask(self, question: str) -> Generator[str, None, None]:
-        tool_desc = _format_tool_descriptions()
-        user_prompt = f"Pergunta do usuário: {question}\n\nQual ferramenta usar?"
-        try:
-            raw = _call_llm(prompt=user_prompt,
-                           system=TOOL_SYSTEM_PROMPT.format(tool_descriptions=tool_desc),
-                           max_tokens=500)
-            raw = raw.strip()
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if start != -1 and end != -1:
-                raw = raw[start:end + 1]
-            data = json.loads(raw)
-            tool = data.get("tool")
-            params = data.get("params", {})
-        except (json.JSONDecodeError, KeyError, TypeError):
-            yield "❌ Não foi possível determinar qual ferramenta usar para responder."
-            return
+        routed = self._route_question(question)
+        if routed:
+            tool, params = routed
+        else:
+            tool_desc = _format_tool_descriptions()
+            user_prompt = f"Pergunta do usuário: {question}\n\nQual ferramenta usar?"
+            try:
+                raw = _call_llm(prompt=user_prompt,
+                               system=TOOL_SYSTEM_PROMPT.format(tool_descriptions=tool_desc),
+                               max_tokens=500)
+                raw = raw.strip()
+                start = raw.find("{")
+                end = raw.rfind("}")
+                if start != -1 and end != -1:
+                    raw = raw[start:end + 1]
+                data = json.loads(raw)
+                tool = data.get("tool")
+                params = data.get("params", {})
+            except (json.JSONDecodeError, KeyError, TypeError):
+                yield "❌ Não foi possível determinar qual ferramenta usar para responder."
+                return
 
         if tool not in TOOL_DEFINITIONS:
             yield "❌ Ferramenta desconhecida."

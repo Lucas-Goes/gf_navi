@@ -75,7 +75,7 @@ class OpenAICompatibleProvider(LLMProvider):
             f"{self.endpoint_url}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=120,
+            timeout=(10, 30),
         )
         resp.raise_for_status()
         data = resp.json()
