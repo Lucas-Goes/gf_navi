@@ -703,7 +703,7 @@ def cmd_db(args, services):
             f"  [cyan]db export json[/cyan]{" " * (pad - 14)} — Exportar tudo para JSON\n"
             f"  [cyan]db export csv[/cyan]{" " * (pad - 13)} — Exportar tudo para CSV\n"
             f"  [cyan]db query <sql>[/cyan]{" " * (pad - 14)} — Executar SELECT\n"
-            f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 23)} — Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
+            f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 22)} — Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
         )
 
     elif cmd == "query":
@@ -760,7 +760,7 @@ def cmd_db(args, services):
         console.print(f"  [cyan]db export json[/cyan]{" " * (pad - 14)} — Exportar tudo para JSON")
         console.print(f"  [cyan]db export csv[/cyan]{" " * (pad - 13)} — Exportar tudo para CSV")
         console.print(f"  [cyan]db query <sql>[/cyan]{" " * (pad - 14)} — Executar SELECT")
-        console.print(f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 23)} — Executar qualquer SQL (DML)")
+        console.print(f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 22)} — Executar qualquer SQL (DML)")
         print()
 
     conn.close()
