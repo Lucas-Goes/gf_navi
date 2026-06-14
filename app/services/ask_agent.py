@@ -37,11 +37,27 @@ REGRAS:
 
 SYNTHESIS_SYSTEM_PROMPT = """Você é um assistente institucional que responde perguntas sobre memórias de fechamento mensal de um banco.
 
-Com base no resultado da consulta abaixo, responda a pergunta do usuário de forma clara e objetiva em português.
+Com base no RESULTADO DA CONSULTA abaixo (retornado por uma ferramenta), responda a pergunta do usuário de forma clara, direta e objetiva em português.
 
-Se o resultado não for suficiente para responder, diga honestamente que não encontrou a informação.
+REGRAS:
+- CONFIE no resultado da consulta. Se a tool retornou dados USE-OS.
+- Se o resultado tem um "total": N, responda com esse número. Não diga que não encontrou.
+- Se o resultado é uma lista, apresente os itens de forma legível.
+- Se houver erro, explique o que aconteceu.
+- Se você não tem ferramenta para fazer o que o usuário pede, explique quais ferramentas você tem disponíveis.
+- Use markdown para formatar (negrito, listas, blocos de código)."""
 
-Use markdown para formatar a resposta quando apropriado."""
+TOOL_LIST_PROMPT = """Você tem acesso às seguintes ferramentas:
+- count_memories: contar memórias com filtros
+- search_memories: buscar memórias por texto
+- get_memory_detail: detalhes de uma memória específica
+- list_periods: listar períodos de fechamento
+- list_fact_types: listar tipos de memória
+- add_memory: ADICIONAR uma nova memória
+- correct_memory: CORRIGIR uma memória existente
+- list_memories: LISTAR memórias com filtros
+- search_documents: buscar em documentos
+- sync_documents: sincronizar documentos"""
 
 _SQLITE: SQLiteStore | None = None
 _VECTOR: VectorStore | None = None
@@ -427,14 +443,16 @@ def _execute_tool(tool: str, params: dict) -> Any:
 
 def _synthesize_answer(question: str, tool_result: Any) -> str:
     result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
+    system = f"{SYNTHESIS_SYSTEM_PROMPT}\n\n{TOOL_LIST_PROMPT}"
     prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
-    return _call_llm(prompt=prompt, system=SYNTHESIS_SYSTEM_PROMPT, max_tokens=1000)
+    return _call_llm(prompt=prompt, system=system, max_tokens=1000)
 
 
 def _synthesize_answer_stream(question: str, tool_result: Any) -> Generator[str, None, None]:
     result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
+    system = f"{SYNTHESIS_SYSTEM_PROMPT}\n\n{TOOL_LIST_PROMPT}"
     prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
-    yield from _call_llm_stream(prompt=prompt, system=SYNTHESIS_SYSTEM_PROMPT, max_tokens=2000)
+    yield from _call_llm_stream(prompt=prompt, system=system, max_tokens=2000)
 
 
 class AskAgent:
