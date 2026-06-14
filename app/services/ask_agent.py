@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import uuid
+from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Generator
 
 from app.config import settings
+from app.models import FactType
+from app.services.ingestion import IngestionService
 from app.services.llm import create_provider
+from app.services.parser import ParserService
 from app.services.search import SearchService
 from app.storage.sqlite_store import SQLiteStore
 from app.storage.vector_store import VectorStore
-
 
 TOOL_SYSTEM_PROMPT = """Você é um assistente que escolhe ferramentas para responder perguntas sobre um banco de memórias institucionais.
 
@@ -18,9 +23,14 @@ Ferramentas disponíveis:
 
 REGRAS:
 - Escolha a ferramenta MAIS ADEQUADA para a pergunta.
-- Se a pergunta pedir contagem, use count_memories.
-- Se a pergunta pedir busca por assunto, use search_memories.
-- Se a pergunta pedir detalhes de uma memória específica, use get_memory_detail.
+- Se a pergunta for uma contagem, use count_memories.
+- Se a pergunta for uma busca por assunto, use search_memories.
+- Se o usuário quiser ADICIONAR uma nova memória, use add_memory.
+- Se o usuário quiser CORRIGIR uma memória existente, use correct_memory.
+- Se o usuário quiser LISTAR memórias, use list_memories.
+- Se o usuário quiser BUSCAR em documentos, use search_documents.
+- Se o usuário quiser SINCRONIZAR documentos, use sync_documents.
+- Se o usuário quiser detalhes de uma memória específica, use get_memory_detail.
 - Retorne APENAS um JSON válido, sem texto adicional, no formato:
 {{"tool": "nome_da_ferramenta", "params": {{...}}}}
 - Se nenhuma ferramenta for adequada, use search_memories com a pergunta como query."""
@@ -33,11 +43,10 @@ Se o resultado não for suficiente para responder, diga honestamente que não en
 
 Use markdown para formatar a resposta quando apropriado."""
 
-
-TOOL_DEFINITIONS = {}
-
 _SQLITE: SQLiteStore | None = None
+_VECTOR: VectorStore | None = None
 _LLM = None
+_INGESTION: IngestionService | None = None
 
 
 def _get_sqlite():
@@ -48,11 +57,25 @@ def _get_sqlite():
     return _SQLITE
 
 
+def _get_vector():
+    global _VECTOR
+    if _VECTOR is None:
+        _VECTOR = VectorStore(settings.chroma_path, settings.embedding_model)
+    return _VECTOR
+
+
 def _get_llm():
     global _LLM
     if _LLM is None:
         _LLM = create_provider(settings)
     return _LLM
+
+
+def _get_ingestion():
+    global _INGESTION
+    if _INGESTION is None:
+        _INGESTION = IngestionService(_get_sqlite(), _get_vector())
+    return _INGESTION
 
 
 def _count_memories(active: bool | None = None, fact_type: str | None = None,
@@ -153,6 +176,116 @@ def _list_fact_types() -> list[dict]:
     return [{"type": r["fact_type"], "count": r["c"]} for r in rows]
 
 
+def _add_memory(text: str, fact_type: str | None = None,
+                closing_period: str | None = None,
+                title: str | None = None) -> dict:
+    parser = ParserService(_get_llm())
+    preview = parser.parse(text)
+    if not preview:
+        return {"error": "Não foi possível interpretar o texto fornecido."}
+
+    if fact_type:
+        try:
+            preview.fact_type = FactType(fact_type)
+        except ValueError:
+            pass
+    if closing_period:
+        preview.closing_period = closing_period
+    if title:
+        preview.title = title[:100]
+
+    ingestion = _get_ingestion()
+    memory = ingestion.confirm(preview)
+    return {
+        "id": memory.id,
+        "title": memory.title,
+        "fact_type": memory.fact_type.value,
+        "closing_period": memory.closing_period,
+        "description": memory.description[:200],
+        "is_active": memory.is_active,
+    }
+
+
+def _correct_memory(id: str, text: str) -> dict:
+    sqlite = _get_sqlite()
+    existing = sqlite.get_memory(id)
+    if not existing:
+        return {"error": f"Memória com ID '{id}' não encontrada."}
+
+    parser = ParserService(_get_llm())
+    preview = parser.parse(text)
+    if not preview:
+        return {"error": "Não foi possível interpretar o texto fornecido."}
+
+    preview.supersedes_id = existing.id
+
+    ingestion = _get_ingestion()
+    memory = ingestion.confirm(preview)
+    return {
+        "id": memory.id,
+        "supersedes_id": existing.id,
+        "title": memory.title,
+        "fact_type": memory.fact_type.value,
+        "closing_period": memory.closing_period,
+        "description": memory.description[:200],
+        "is_active": memory.is_active,
+    }
+
+
+def _list_memories(fact_type: str | None = None,
+                   closing_period: str | None = None,
+                   active: bool | None = None,
+                   limit: int = 20) -> list[dict]:
+    sqlite = _get_sqlite()
+    memories = sqlite.search_memories_sql(
+        fact_type=fact_type,
+        closing_period=closing_period,
+        limit=limit,
+    )
+    results = []
+    for m in memories:
+        if active is not None and m.is_active != active:
+            continue
+        results.append({
+            "id": m.id[:8],
+            "title": m.title,
+            "fact_type": m.fact_type.value,
+            "closing_period": m.closing_period,
+            "description": m.description[:200],
+            "decided_by": m.decided_by,
+            "registered_by": m.registered_by,
+            "registration_date": m.registration_date,
+            "is_active": m.is_active,
+        })
+    return results
+
+
+def _search_documents(query: str, top_k: int = 5) -> list[dict]:
+    sqlite = _get_sqlite()
+    docs = sqlite.search_documents(text_query=query, limit=top_k)
+    return [
+        {
+            "id": d.id[:8],
+            "title": d.title,
+            "filename": d.filename,
+            "source_type": d.source_type,
+        }
+        for d in docs
+    ]
+
+
+def _sync_documents() -> dict:
+    from app.doc_sync import cmd_sync_docs
+    import io
+    from contextlib import redirect_stdout
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_sync_docs(_get_sqlite(), _get_vector())
+    output = buf.getvalue()
+    return {"output": output.strip()}
+
+
 TOOL_DEFINITIONS = {
     "count_memories": {
         "description": "Contar memórias com filtros opcionais. Use quando perguntarem quantas memórias existem, totais, contagens.",
@@ -189,6 +322,47 @@ TOOL_DEFINITIONS = {
         "description": "Listar todos os tipos de memória disponíveis com contagem.",
         "params": {},
         "fn": _list_fact_types,
+    },
+    "add_memory": {
+        "description": "Adicionar uma nova memória institucional. Use quando o usuário pedir para adicionar, criar, registrar ou salvar uma memória.",
+        "params": {
+            "text": {"type": "string", "description": "Descrição completa da memória em linguagem natural", "required": True},
+            "fact_type": {"type": "string", "description": "Tipo da memória (rule_change, decision, implementation, incident, other) — opcional, detectado automaticamente", "required": False},
+            "closing_period": {"type": "string", "description": "Período YYYY-MM — opcional, detectado automaticamente", "required": False},
+            "title": {"type": "string", "description": "Título opcional (máx 100 caracteres)", "required": False},
+        },
+        "fn": _add_memory,
+    },
+    "correct_memory": {
+        "description": "Corrigir/substituir uma memória existente. Use quando o usuário pedir para corrigir, atualizar, alterar ou modificar uma memória.",
+        "params": {
+            "id": {"type": "string", "description": "ID ou prefixo de 8+ caracteres da memória a ser corrigida", "required": True},
+            "text": {"type": "string", "description": "Nova descrição corrigida em linguagem natural", "required": True},
+        },
+        "fn": _correct_memory,
+    },
+    "list_memories": {
+        "description": "Listar memórias com filtros opcionais. Use quando o usuário quiser ver, listar, exibir ou mostrar memórias.",
+        "params": {
+            "fact_type": {"type": "string", "description": "Filtrar por tipo", "required": False},
+            "closing_period": {"type": "string", "description": "Filtrar por período YYYY-MM", "required": False},
+            "active": {"type": "boolean", "description": "Filtrar por ativas (true) ou inativas (false)", "required": False},
+            "limit": {"type": "integer", "description": "Máximo de resultados (max 50)", "required": False},
+        },
+        "fn": _list_memories,
+    },
+    "search_documents": {
+        "description": "Buscar documentos anexados às memórias. Use quando o usuário quiser buscar, pesquisar ou encontrar documentos.",
+        "params": {
+            "query": {"type": "string", "description": "Termo de busca no nome ou conteúdo do documento", "required": True},
+            "top_k": {"type": "integer", "description": "Número de resultados (max 10)", "required": False},
+        },
+        "fn": _search_documents,
+    },
+    "sync_documents": {
+        "description": "Sincronizar documentos da pasta data/documents/ com o banco. Use quando o usuário pedir para sincronizar, atualizar ou recarregar documentos.",
+        "params": {},
+        "fn": _sync_documents,
     },
 }
 
