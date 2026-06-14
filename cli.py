@@ -707,8 +707,8 @@ def cmd_db(args, services):
         if not sql:
             Console().print("[red]Informe a SQL: db query <sql>[/red]")
             return
-        if not sql.strip().upper().startswith("SELECT"):
-            Console().print("[red]Apenas consultas SELECT são permitidas (protegido contra alterações).[/red]")
+        if not sql.strip().upper().startswith("SELECT") and not args.force:
+            Console().print("[red]Apenas consultas SELECT são permitidas. Use --force para executar mesmo assim.[/red]")
             return
         console = Console()
         try:
@@ -802,6 +802,7 @@ def main():
     p_db.add_argument("--all", action="store_true", help="Incluir registros inativos")
     p_db.add_argument("--limit", type=int, default=100, help="Limite de linhas")
     p_db.add_argument("--format", choices=["json", "csv"], default="json", help="Formato de exportação")
+    p_db.add_argument("--force", action="store_true", help="Permite INSERT/UPDATE/DELETE no db query")
 
     args = parser.parse_args()
 
