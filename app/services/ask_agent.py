@@ -517,9 +517,15 @@ def _execute_tool(tool: str, params: dict) -> Any:
         if missing:
             return {"error": f"Parâmetros obrigatórios faltando: {', '.join(missing)}"}
         valid_params = {}
-        for pname in t["params"]:
+        for pname, pinfo in t["params"].items():
             if pname in params:
-                valid_params[pname] = params[pname]
+                value = params[pname]
+                if pinfo.get("type") == "integer" and not isinstance(value, int):
+                    try:
+                        value = int(value)
+                    except (ValueError, TypeError):
+                        pass
+                valid_params[pname] = value
         return fn(**valid_params)
     except Exception as e:
         return {"error": str(e)}
