@@ -9,8 +9,9 @@ Uso:
   python cli.py search <termo>     Buscar memórias (sem LLM)
   python cli.py list [--type T] [--period YYYY-MM]  Listar memórias
   python cli.py get <id>           Ver detalhes de uma memória
-  python cli.py sync-docs          Sincronizar documentos
-  python cli.py provider [nome]    Ver/trocar provider (nvidia, bedrock, ollama)
+   python cli.py sync-docs          Sincronizar documentos
+   python cli.py provider [nome]    Ver/trocar provider (nvidia, bedrock, ollama)
+   python cli.py help               Mostrar esta ajuda
 """
 
 from __future__ import annotations
@@ -766,6 +767,24 @@ def cmd_db(args, services):
     conn.close()
 
 
+def _cli_help():
+    pad = 23
+    Console().print(
+        "\n[bold cyan]Navi — Cérebro Institucional[/bold cyan]\n"
+        f"  [cyan]add <texto>[/cyan]{" " * (pad - 11)} — Adicionar nova memória\n"
+        f"  [cyan]ask <perg>[/cyan]{" " * (pad - 10)} — Perguntar sobre memórias\n"
+        f"  [cyan]search <termo>[/cyan]{" " * (pad - 14)} — Buscar memórias (sem LLM)\n"
+        f"  [cyan]list[/cyan]{" " * (pad - 4)} — Listar memórias\n"
+        f"  [cyan]get <id>[/cyan]{" " * (pad - 8)} — Detalhes de uma memória\n"
+        f"  [cyan]correct [-i ID] <texto>[/cyan]{" " * (pad - 23)} — Corrigir memória (ID opcional)\n"
+        f"  [cyan]sync-docs[/cyan]{" " * (pad - 9)} — Sincronizar documentos\n"
+        f"  [cyan]provider[/cyan]{" " * (pad - 8)} — Ver/trocar provider LLM\n"
+        f"  [cyan]db <subcmd>[/cyan]{" " * (pad - 11)} — Visualizar/exportar banco\n"
+        f"  [cyan]help[/cyan]{" " * (pad - 4)} — Mostrar esta ajuda\n"
+        "\n[dim]Consulte [cyan]db help[/cyan] para detalhes do database viewer.[/dim]\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Navi — Cérebro Institucional (CLI)"
@@ -803,6 +822,8 @@ def main():
     p_prov = sub.add_parser("provider", help="Ver/trocar provider LLM")
     p_prov.add_argument("name", nargs="?", help="nvidia, bedrock, ollama")
 
+    sub.add_parser("help", help="Mostrar esta ajuda")
+
     p_db = sub.add_parser("db", help="Visualizar/exportar banco de dados")
     p_db.add_argument("command_db", nargs=argparse.REMAINDER, default=[], help="Subcomando + argumentos (ex: memories, memory <id>, export json)")
     p_db.add_argument("--all", action="store_true", help="Incluir registros inativos")
@@ -825,9 +846,10 @@ def main():
         "sync-docs": cmd_sync_docs,
         "provider": cmd_provider,
         "db": cmd_db,
+        "help": lambda a, s: _cli_help(),
     }
 
-    if args.command in ("provider", "db"):
+    if args.command in ("provider", "db", "help"):
         commands[args.command](args, None)
     else:
         services = get_services()
