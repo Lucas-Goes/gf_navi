@@ -685,6 +685,23 @@ def cmd_db(args, services):
                         writer.writerow([str(v) if v is not None else "" for v in r])
             print(f"✅ Export CSV salvo em: {out_dir}")
 
+    elif cmd == "help":
+        Console().print(
+            "\n[bold cyan]🗄️  Navi — Database Viewer[/bold cyan]\n"
+            "  [cyan]db[/cyan]                     Dashboard com contagens\n"
+            "  [cyan]db help[/cyan]                Mostrar esta ajuda\n"
+            "  [cyan]db tables[/cyan]              Listar tabelas com schema SQL\n"
+            "  [cyan]db memories[/cyan]            Listar memórias ativas\n"
+            "  [cyan]db memories --all[/cyan]      Listar todas (ativas e inativas)\n"
+            "  [cyan]db documents[/cyan]           Listar documentos/chunks\n"
+            "  [cyan]db links[/cyan]               Vínculos memória ↔ documento\n"
+            "  [cyan]db memory <id>[/cyan]         Detalhes completos de uma memória\n"
+            "  [cyan]db document <id>[/cyan]       Conteúdo completo de um documento\n"
+            "  [cyan]db export json[/cyan]         Exportar tudo para JSON\n"
+            "  [cyan]db export csv[/cyan]          Exportar tudo para CSV\n"
+            "  [cyan]db query <sql>[/cyan]         Executar SQL arbitrário\n"
+        )
+
     elif cmd == "query":
         sql = " ".join(extra) if extra else None
         if not sql:
