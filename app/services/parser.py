@@ -16,6 +16,7 @@ Extraia os campos conforme o schema JSON abaixo:
   "fact_type": "enum: rule_change | decision | implementation | incident | other",
   "closing_period": "string (obrigatório, formato YYYY-MM do período de fechamento)",
   "description": "string (obrigatório, 1 a 3 parágrafos detalhando o fato)",
+  "tags": "array de strings (opcional, lista de palavras-chave que categorizam a memória, ex: ['compliance', 'crédito', 'sistema'], máximo 5 tags)",
   "decided_by": "string | null (quem decidiu, se mencionado)",
   "requested_by": "string | null (quem solicitou, se mencionado)",
   "approved_by": "string | null (quem aprovou, se mencionado)",
@@ -30,6 +31,7 @@ Regras:
 - closing_period é obrigatório no formato YYYY-MM
 - Se o texto mencionar correção de algo anterior, marque is_correction=true
 - Se houver menção explícita a um ID de memória sendo corrigido, preencha supersedes_id
+- tags: extraia de 1 a 5 palavras-chave que representem os assuntos principais (ex: compliance, crédito, sistema, processo, relatório). Use apenas o radical da palavra. Cada tag deve ter no máximo 20 caracteres.
 - Retorne APENAS o JSON, sem texto adicional."""
 
 
@@ -126,6 +128,8 @@ class ParserService:
 
         raw_period = data.get("closing_period", "")
         closing_period = self._normalize_period(raw_period)
+        if not closing_period or not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", closing_period):
+            closing_period = datetime.now().strftime("%Y-%m")
 
         description = data.get("description")
         if not description or not description.strip():
@@ -137,11 +141,18 @@ class ParserService:
         else:
             cs = float(raw_cs)
 
+        raw_tags = data.get("tags", [])
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        cleaned_tags = [str(t).strip().lower()[:20] for t in raw_tags if t and str(t).strip()]
+        cleaned_tags = cleaned_tags[:5]
+
         preview = Preview(
             title=data.get("title", "(sem título)")[:100],
             fact_type=fact_type,
             closing_period=closing_period,
             description=description,
+            tags=cleaned_tags,
             decided_by=data.get("decided_by"),
             requested_by=data.get("requested_by"),
             approved_by=data.get("approved_by"),

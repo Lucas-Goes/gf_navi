@@ -65,6 +65,14 @@ def cmd_add(args, services):
         print("❌ Não foi possível extrair os campos.")
         sys.exit(1)
 
+    if args.tags:
+        extra_tags = [t.strip().lower()[:20] for t in args.tags.split(",") if t.strip()]
+        existing = set(preview.tags)
+        for t in extra_tags:
+            if t not in existing:
+                preview.tags.append(t)
+        preview.tags = preview.tags[:5]
+
     ingestion.store_preview(preview)
     _show_preview(preview)
 
@@ -302,9 +310,11 @@ def cmd_search(args, services):
 
 def cmd_list(args, services):
     sqlite, *_ = services
+    tag_list = [t.strip().lower() for t in args.tags.split(",") if t.strip()] if args.tags else None
     memories = sqlite.search_memories_sql(
         fact_type=args.type,
         closing_period=args.period,
+        tags=tag_list,
         limit=args.limit or 50,
     )
 
@@ -315,7 +325,8 @@ def cmd_list(args, services):
     print(f"\n📋 {len(memories)} memória(s) encontrada(s):\n")
     for m in memories:
         status = " [CORRIGIDA]" if m.superseded_by else ""
-        print(f"  {m.id[:8]}  {m.closing_period}  {m.fact_type.value:15s}  {m.title}{status}")
+        tags_str = f" ({', '.join(m.tags)})" if m.tags else ""
+        print(f"  {m.id[:8]}  {m.closing_period}  {m.fact_type.value:15s}  {m.title}{tags_str}{status}")
 
 
 def cmd_get(args, services):
@@ -329,6 +340,8 @@ def cmd_get(args, services):
     print(f"   Título: {memory.title}")
     print(f"   Tipo: {memory.fact_type.value}")
     print(f"   Período: {memory.closing_period}")
+    if memory.tags:
+        print(f"   Tags: {', '.join(memory.tags)}")
     print(f"   Descrição:\n{textwrap.indent(memory.description, '      ')}")
     print(f"   Decidido por: {memory.decided_by or '—'}")
     print(f"   Solicitado por: {memory.requested_by or '—'}")
@@ -353,6 +366,8 @@ def _show_preview(preview: Preview):
     print(f"   Título: {preview.title}")
     print(f"   Tipo: {preview.fact_type.value}")
     print(f"   Período: {preview.closing_period}")
+    if preview.tags:
+        print(f"   Tags: {', '.join(preview.tags)}")
     print(f"   Descrição:\n{textwrap.indent(preview.description, '      ')}")
     print(f"   Decidido por: {preview.decided_by or '—'}")
     print(f"   Solicitado por: {preview.requested_by or '—'}")
@@ -457,6 +472,7 @@ def main():
 
     p_add = sub.add_parser("add", help="Adicionar nova memória")
     p_add.add_argument("text", nargs="+", help="Texto da memória")
+    p_add.add_argument("--tags", help="Tags separadas por vírgula (opcional)")
 
     p_ask = sub.add_parser("ask", help="Perguntar sobre memórias")
     p_ask.add_argument("text", nargs="+", help="Pergunta em linguagem natural")
@@ -472,6 +488,7 @@ def main():
     p_list = sub.add_parser("list", help="Listar memórias")
     p_list.add_argument("--type", help="Filtrar por tipo")
     p_list.add_argument("--period", help="Filtrar por período (YYYY-MM)")
+    p_list.add_argument("--tags", help="Filtrar por tags (separadas por vírgula)")
     p_list.add_argument("--limit", type=int, default=50)
 
     p_get = sub.add_parser("get", help="Ver detalhes de uma memória")
@@ -514,8 +531,12 @@ def main():
 
     if args.command == "db":
         conn = _db_conn()
+        cmd_parts = args.command_db[:]
+        show_all = args.all or "--all" in cmd_parts
+        if "--all" in cmd_parts:
+            cmd_parts.remove("--all")
         try:
-            db_cmd(conn, args.command_db, args.all, args.limit, args.format)
+            db_cmd(conn, cmd_parts, show_all, args.limit, args.format)
         finally:
             conn.close()
     elif args.command in ("provider", "help"):

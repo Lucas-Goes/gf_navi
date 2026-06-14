@@ -47,6 +47,7 @@ class SQLiteStore:
                 closing_period TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '',
                 decided_by TEXT,
                 requested_by TEXT,
                 approved_by TEXT,
@@ -88,18 +89,26 @@ class SQLiteStore:
         """)
         conn.commit()
 
+        try:
+            conn.execute("ALTER TABLE memories ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     def insert_memory(self, memory: Memory) -> Memory:
         conn = self.connect()
         conn.execute(
             """INSERT INTO memories
-               (id, fact_type, closing_period, title, description,
+               (id, fact_type, closing_period, title, description, tags,
                 decided_by, requested_by, approved_by, metadata,
                 supersedes_id, superseded_by, registration_date,
                 registered_by, created_at, updated_at, is_active)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 memory.id, memory.fact_type.value, memory.closing_period,
-                memory.title, memory.description, memory.decided_by,
+                memory.title, memory.description,
+                ",".join(memory.tags),
+                memory.decided_by,
                 memory.requested_by, memory.approved_by,
                 json.dumps(memory.metadata) if memory.metadata else None,
                 memory.supersedes_id, memory.superseded_by,
@@ -155,6 +164,7 @@ class SQLiteStore:
         self, fact_type: Optional[str] = None,
         closing_period: Optional[str] = None,
         text_query: Optional[str] = None,
+        tags: Optional[list[str]] = None,
         limit: int = 20,
     ) -> list[Memory]:
         conn = self.connect()
@@ -167,6 +177,12 @@ class SQLiteStore:
         if closing_period:
             conditions.append("closing_period = ?")
             params.append(closing_period)
+        if tags:
+            tag_clauses = []
+            for t in tags:
+                tag_clauses.append("tags LIKE ?")
+                params.append(f"%{t}%")
+            conditions.append(f"({' OR '.join(tag_clauses)})")
         if text_query:
             tokens = [t.strip() for t in text_query.split() if t.strip()]
             if len(tokens) > 1:
@@ -272,12 +288,15 @@ class SQLiteStore:
         return row is not None
 
     def _row_to_memory(self, row: sqlite3.Row) -> Memory:
+        raw_tags = row["tags"] or ""
+        parsed_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         return Memory(
             id=row["id"],
             fact_type=row["fact_type"],
             closing_period=row["closing_period"],
             title=row["title"],
             description=row["description"],
+            tags=parsed_tags,
             decided_by=row["decided_by"],
             requested_by=row["requested_by"],
             approved_by=row["approved_by"],

@@ -22,6 +22,7 @@ class Memory(BaseModel):
     closing_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     title: str
     description: str
+    tags: list[str] = Field(default_factory=list)
     decided_by: Optional[str] = None
     requested_by: Optional[str] = None
     approved_by: Optional[str] = None
@@ -64,6 +65,7 @@ class Preview(BaseModel):
     fact_type: FactType
     closing_period: str
     description: str
+    tags: list[str] = Field(default_factory=list)
     decided_by: Optional[str] = None
     requested_by: Optional[str] = None
     approved_by: Optional[str] = None
