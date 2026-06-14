@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -102,6 +103,21 @@ class SQLiteStore:
         conn.commit()
         return memory
 
+    def _resolve_prefix(self, prefix: str, table: str = "memories") -> Optional[str]:
+        if not prefix or len(prefix) < 8:
+            return None
+        conn = self.connect()
+        rows = conn.execute(
+            f"SELECT id FROM {table} WHERE id LIKE ? || '%'", (prefix,)
+        ).fetchall()
+        if len(rows) == 1:
+            return rows[0]["id"]
+        if len(rows) > 1:
+            matches = ", ".join(r["id"][:8] for r in rows[:5])
+            print(f"   ⚠️  Prefixo '{prefix}' é ambíguo. Múltiplas memórias começam assim: {matches}")
+            print(f"   💡 Use o ID completo (8+ caracteres) para desambiguar.")
+        return None
+
     def get_memory(self, memory_id: str) -> Optional[Memory]:
         conn = self.connect()
         row = conn.execute(
@@ -109,10 +125,13 @@ class SQLiteStore:
         ).fetchone()
         if row:
             return self._row_to_memory(row)
-        row = conn.execute(
-            "SELECT * FROM memories WHERE id LIKE ? || '%'", (memory_id,)
-        ).fetchone()
-        return self._row_to_memory(row) if row else None
+        resolved = self._resolve_prefix(memory_id, "memories")
+        if resolved:
+            row = conn.execute(
+                "SELECT * FROM memories WHERE id = ?", (resolved,)
+            ).fetchone()
+            return self._row_to_memory(row) if row else None
+        return None
 
     def get_memories_by_ids(self, ids: list[str]) -> list[Memory]:
         if not ids:
@@ -151,18 +170,26 @@ class SQLiteStore:
         ).fetchall()
         return [self._row_to_memory(r) for r in rows]
 
+    def delete_memory(self, memory_id: str):
+        conn = self.connect()
+        conn.execute("DELETE FROM memory_documents WHERE memory_id = ?", (memory_id,))
+        conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        conn.commit()
+
     def update_superseded_by(self, memory_id: str, superseded_by_id: str):
         conn = self.connect()
-        row = conn.execute(
-            "SELECT id FROM memories WHERE id = ? OR id LIKE ? || '%'",
-            (memory_id, memory_id),
-        ).fetchone()
-        if not row:
-            return
-        full_id = row["id"]
+        resolved = self._resolve_prefix(memory_id, "memories")
+        if not resolved:
+            row = conn.execute(
+                "SELECT id FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if not row:
+                return
+            resolved = row["id"]
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             "UPDATE memories SET superseded_by = ?, is_active = 0, updated_at = ? WHERE id = ?",
-            (superseded_by_id, superseded_by_id, full_id),
+            (superseded_by_id, now, resolved),
         )
         conn.commit()
 
@@ -212,6 +239,14 @@ class SQLiteStore:
             (memory_id, document_id),
         )
         conn.commit()
+
+    def search_documents_by_filename(self, term: str) -> list[Document]:
+        conn = self.connect()
+        rows = conn.execute(
+            "SELECT * FROM documents WHERE filename LIKE ? ORDER BY filename, chunk_index",
+            (f"{term}%",),
+        ).fetchall()
+        return [self._row_to_document(r) for r in rows]
 
     def document_exists(self, filename: str) -> bool:
         conn = self.connect()

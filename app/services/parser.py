@@ -64,8 +64,10 @@ class ParserService:
             "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
         }
 
-        if re.match(r"^\d{4}-\d{2}$", raw):
-            return raw
+        if re.match(r"^\d{4}-(0[1-9]|1[0-2])$", raw):
+            ano = int(raw[:4])
+            if 1900 <= ano <= 2099:
+                return raw
 
         m = re.match(r"^\d{4}(\d{2})$", raw)
         if m:
@@ -107,8 +109,10 @@ class ParserService:
         else:
             json_str = raw
 
-        json_str = re.sub(r"^[^{]*", "", json_str)
-        json_str = re.sub(r"[^}]*$", "", json_str)
+        start = json_str.find("{")
+        end = json_str.rfind("}")
+        if start != -1 and end != -1 and end >= start:
+            json_str = json_str[start : end + 1]
         json_str = json_str.strip()
 
         data = json.loads(json_str)
@@ -123,17 +127,27 @@ class ParserService:
         raw_period = data.get("closing_period", "")
         closing_period = self._normalize_period(raw_period)
 
+        description = data.get("description")
+        if not description or not description.strip():
+            description = original_text
+
+        raw_cs = data.get("confidence_score")
+        if raw_cs is None or raw_cs == "null" or raw_cs == "":
+            cs = 1.0
+        else:
+            cs = float(raw_cs)
+
         preview = Preview(
             title=data.get("title", "(sem título)")[:100],
             fact_type=fact_type,
             closing_period=closing_period,
-            description=data.get("description", original_text),
+            description=description,
             decided_by=data.get("decided_by"),
             requested_by=data.get("requested_by"),
             approved_by=data.get("approved_by"),
             metadata=data.get("metadata"),
             supersedes_id=supersedes_id,
             is_correction=data.get("is_correction", False),
-            confidence_score=float(data.get("confidence_score", 1.0)),
+            confidence_score=cs,
         )
         return preview

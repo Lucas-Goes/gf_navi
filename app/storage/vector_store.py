@@ -11,7 +11,13 @@ from app.config import settings
 
 class VectorStore:
     def __init__(self, persist_path: str, model_name: str):
-        self.model = SentenceTransformer(model_name)
+        try:
+            self.model = SentenceTransformer(model_name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Falha ao carregar modelo de embeddings '{model_name}': {e}\n"
+                "   Verifique a conexão com a internet ou defina EMBEDDING_MODEL no .env"
+            )
         self.client = chromadb.PersistentClient(
             path=persist_path,
             settings=ChromaSettings(anonymized_telemetry=False),
@@ -50,8 +56,8 @@ class VectorStore:
     def delete_memory(self, memory_id: str):
         try:
             self.memories_collection.delete(ids=[memory_id])
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"   ⚠️  Erro ao remover memória do índice vetorial: {e}")
 
     def search_memories(
         self, query: str, top_k: int = 5
@@ -77,8 +83,8 @@ class VectorStore:
     def delete_document(self, doc_id: str):
         try:
             self.documents_collection.delete(ids=[doc_id])
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"   ⚠️  Erro ao remover documento do índice vetorial: {e}")
 
     def search_documents(
         self, query: str, top_k: int = 5

@@ -20,6 +20,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -53,7 +54,7 @@ def get_services():
 
 
 def cmd_add(args, services):
-    _, _, parser, ingestion, _, _ = services
+    sqlite, _, parser, ingestion, _, _ = services
     text = " ".join(args.text) if isinstance(args.text, list) else args.text
 
     print("\n🧠 Analisando texto e extraindo campos...\n")
@@ -62,10 +63,10 @@ def cmd_add(args, services):
     except Exception as e:
         print(f"❌ Erro ao processar: {e}")
         print("   Verifique se o LLM está configurado corretamente.")
-        return
+        sys.exit(1)
     if not preview:
         print("❌ Não foi possível extrair os campos.")
-        return
+        sys.exit(1)
 
     ingestion.store_preview(preview)
     _show_preview(preview)
@@ -85,6 +86,7 @@ def cmd_add(args, services):
         memory = ingestion.confirm(preview)
         print(f"\n✅ Memória salva! ID: {memory.id}")
         print(f"   Título: {memory.title}")
+        _link_documents(sqlite, text, memory.id, preview.supersedes_id)
     else:
         ingestion.remove_preview(preview.preview_id)
         print("⏭️  Cancelado.")
@@ -131,10 +133,15 @@ def _infer_memory(sqlite, search, text: str):
     if best.superseded_by:
         superseder = sqlite.get_memory(best.superseded_by)
         if superseder and superseder.is_active:
-            print(f"   ⚠️  A memória '{best.title}' foi corrigida por uma versão mais recente.")
-            print(f"   💡 Usando a versão ativa: {superseder.title} ({superseder.id[:8]})")
+            print(f"   ⚠️  '{best.title}' já foi atualizada posteriormente.")
+            print(f"   💡 Redirecionando para a versão mais recente: {superseder.title} ({superseder.id[:8]})")
             return superseder
 
+    if best.is_active:
+        return best
+
+    print(f"   ⚠️  '{best.title}' está inativa e não possui uma versão substituta.")
+    print(f"   ⚠️  Corrigir uma memória inativa pode causar inconsistências no histórico.")
     return best
 
 
@@ -147,10 +154,10 @@ def cmd_correct(args, services):
         old = sqlite.get_memory(memory_id)
         if not old:
             print(f"❌ Memória {memory_id} não encontrada.")
-            return
+            sys.exit(1)
     else:
         first_word = args.text[0].lower()
-        if len(first_word) >= 6 and all(c in "0123456789abcdef" for c in first_word):
+        if len(first_word) == 8 and all(c in "0123456789abcdef" for c in first_word):
             candidate = sqlite.get_memory(first_word)
             if candidate:
                 memory_id = first_word
@@ -162,7 +169,7 @@ def cmd_correct(args, services):
             old = _infer_memory(sqlite, search, text)
             if not old:
                 print("❌ Não foi possível identificar qual memória corrigir.")
-                return
+                sys.exit(1)
             print(f"🔍 Memória identificada:\n")
             print(f"   ID: {old.id[:8]}")
             print(f"   Título: {old.title}")
@@ -174,6 +181,28 @@ def cmd_correct(args, services):
             if conf != "s":
                 print("⏭️  Cancelado.")
                 return
+
+    if not old.is_active and old.superseded_by:
+        latest = old
+        chain_len = 0
+        max_depth = 50
+        while latest and latest.superseded_by and chain_len < max_depth:
+            latest = sqlite.get_memory(latest.superseded_by)
+            chain_len += 1
+        if chain_len >= max_depth:
+            print("⚠️  Cadeia de correção muito longa (>50). Entre em contato com o suporte.")
+            return
+        if latest:
+            print(f"⚠️  Esta memória já foi atualizada {chain_len} vez(es).")
+            print(f"   A versão mais recente é: {latest.title} ({latest.id[:8]})")
+            if latest.registration_date:
+                dt = latest.registration_date[:10]
+                print(f"   Registrada em: {dt}")
+            conf = input("   A correção será aplicada sobre a versão mais recente. Continuar? (S/n): ").strip().lower()
+            if conf == "n":
+                print("⏭️  Cancelado.")
+                return
+            old = latest
 
     print(f"\n📌 Memória original: {old.title} ({old.id[:8]})\n")
 
@@ -233,9 +262,73 @@ def cmd_correct(args, services):
         memory = ingestion.confirm(preview)
         print(f"\n✅ Memória corrigida! Nova ID: {memory.id}")
         print(f"   Título: {memory.title}")
+        _link_documents(sqlite, text, memory.id, preview.supersedes_id)
     else:
         ingestion.remove_preview(preview.preview_id)
         print("⏭️  Cancelado.")
+
+
+def _find_document_refs(text: str) -> list[str]:
+    patterns = [
+        r'doc[:\s]+([\w\-_.]+\.(?:txt|pdf|md))',
+        r'documento[:\s]+([\w\-_.]+\.(?:txt|pdf|md))',
+        r'arquivo[:\s]+([\w\-_.]+\.(?:txt|pdf|md))',
+    ]
+    refs = []
+    for pattern in patterns:
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            refs.append(m.group(1))
+    return refs
+
+
+def _link_documents(sqlite, text: str, memory_id: str, supersedes_id: str | None = None):
+    if supersedes_id:
+        seen = set()
+        chain = [supersedes_id]
+        depth = 0
+        while chain and depth < 50:
+            depth += 1
+            cur = chain.pop()
+            docs = sqlite.get_documents_by_memory(cur)
+            for d in docs:
+                if d.id not in seen:
+                    sqlite.link_memory_document(memory_id, d.id)
+                    seen.add(d.id)
+            mem = sqlite.get_memory(cur)
+            if mem and mem.supersedes_id and mem.supersedes_id not in seen:
+                chain.append(mem.supersedes_id)
+        if seen:
+            plural = "s" if len(seen) > 1 else ""
+            print(f"   🔗 Herdado(s) {len(seen)} vínculo{plural} de documento{plural} da cadeia de correção")
+
+    refs = _find_document_refs(text)
+    if not refs:
+        return
+    for ref in refs:
+        docs = sqlite.search_documents_by_filename(ref)
+        if docs:
+            doc_ids = set()
+            for d in docs:
+                sqlite.link_memory_document(memory_id, d.id)
+                doc_ids.add(d.id)
+            print(f"   📎 Vinculado ao documento: {docs[0].filename}"
+                  f"{' (+ {} chunk(s))'.format(len(doc_ids) - 1) if len(doc_ids) > 1 else ''}")
+        else:
+            resp = input(f"   ⚠️  Documento '{ref}' não encontrado. [a]dicionar / [p]ular / [e]ditar nome? (a/P/e): ").strip().lower()
+            if resp == "a":
+                print("   Use 'python cli.py sync-docs' após adicionar o arquivo em data/documents/")
+            elif resp == "e":
+                novo = input("      Nome correto do documento: ").strip()
+                if novo:
+                    docs = sqlite.search_documents_by_filename(novo)
+                    if docs:
+                        for d in docs:
+                            sqlite.link_memory_document(memory_id, d.id)
+                        print(f"   📎 Vinculado ao documento: {docs[0].filename}")
+                    else:
+                        print(f"   ⚠️  Documento '{novo}' também não encontrado.")
+            else:
+                print(f"   ⏭️  Vínculo com '{ref}' pulado.")
 
 
 def cmd_ask(args, services):
@@ -310,7 +403,7 @@ def cmd_get(args, services):
     memory = sqlite.get_memory(args.id)
     if not memory:
         print("❌ Memória não encontrada.")
-        return
+        sys.exit(1)
 
     print(f"\n📌 ID: {memory.id}")
     print(f"   Título: {memory.title}")
@@ -372,7 +465,7 @@ def cmd_sync_docs(args, services):
         else:
             content = filepath.read_text(encoding="utf-8", errors="replace")
 
-        chunk_size = 1000
+        chunk_size = 1500
         chunks = [
             content[i : i + chunk_size]
             for i in range(0, len(content), chunk_size)
@@ -462,22 +555,23 @@ def cmd_provider(args, services):
         "aws_profile": "AWS_PROFILE",
     }
 
+    env_keys = set(key_mapping.values())
     lines = env_path.read_text().splitlines() if env_path.exists() else []
-    env_map = {}
+    new_lines = []
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
+            new_lines.append(line)
             continue
-        key, _, val = stripped.partition("=")
-        env_map[key.strip()] = val.strip()
+        key, _, _ = stripped.partition("=")
+        if key.strip() in env_keys:
+            continue
+        new_lines.append(line)
 
     for lk, uk in key_mapping.items():
         if lk in conf:
-            env_map[uk] = conf[lk]
-        else:
-            env_map.pop(uk, None)
+            new_lines.append(f"{uk}={conf[lk]}")
 
-    new_lines = [f"{k}={v}" for k, v in env_map.items()]
     env_path.write_text("\n".join(new_lines) + "\n")
 
     print(f"\n✅ Provider trocado para: {name}")
@@ -490,6 +584,8 @@ def _db_conn():
     import sqlite3
     conn = sqlite3.connect(settings.sqlite_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
@@ -594,9 +690,19 @@ def cmd_db(args, services):
             return
         console = Console()
         row = conn.execute(
-            "SELECT * FROM memories WHERE id = ? OR id LIKE ? || '%'",
-            (entry_id, entry_id),
+            "SELECT * FROM memories WHERE id = ?", (entry_id,)
         ).fetchone()
+        if not row and len(entry_id) >= 8:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE id LIKE ? || '%'", (entry_id,)
+            ).fetchall()
+            if len(rows) == 1:
+                row = rows[0]
+            elif len(rows) > 1:
+                matches = ", ".join(r["id"][:8] for r in rows[:5])
+                console.print(f"[red]Prefixo '{entry_id}' é ambíguo. IDs: {matches}[/red]")
+                console.print("[red]Use o ID completo (8+ caracteres).[/red]")
+                return
         if not row:
             console.print(f"[red]Memória {entry_id} não encontrada.[/red]")
             return
@@ -715,6 +821,11 @@ def cmd_db(args, services):
         if not sql.strip().upper().startswith("SELECT") and not force:
             Console().print("[red]Apenas consultas SELECT são permitidas. Use --force para executar mesmo assim.[/red]")
             return
+        if force and not sql.strip().upper().startswith("SELECT"):
+            conf = input("\n⚠️  Você está prestes a executar um comando de escrita no banco. Tem certeza? (s/N): ").strip().lower()
+            if conf != "s":
+                Console().print("[yellow]Comando cancelado.[/yellow]")
+                return
         console = Console()
         try:
             cursor = conn.execute(sql)

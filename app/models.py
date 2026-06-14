@@ -19,7 +19,7 @@ class FactType(str, Enum):
 class Memory(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     fact_type: FactType
-    closing_period: str
+    closing_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     title: str
     description: str
     decided_by: Optional[str] = None
@@ -70,7 +70,7 @@ class Preview(BaseModel):
     metadata: Optional[dict] = None
     supersedes_id: Optional[str] = None
     is_correction: bool = False
-    confidence_score: float = 1.0
+    confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
     superseded_memory_title: Optional[str] = None
 
 

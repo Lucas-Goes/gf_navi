@@ -13,7 +13,7 @@ class LLMProvider(ABC):
         ...
 
     def invoke_stream(self, prompt: str, system_prompt: str = "",
-                      max_tokens: int = 4000, temperature: float = 0.3
+                      max_tokens: int = 2000, temperature: float = 0.3
                       ) -> Generator[str, None, None]:
         yield self.invoke(prompt, system_prompt, max_tokens, temperature)
 
@@ -27,6 +27,7 @@ class BedrockProvider(LLMProvider):
             session = boto3.Session(profile_name=profile)
             self.client = session.client("bedrock-runtime", region_name=region)
         except Exception:
+            print(f"   ⚠️  Perfil AWS '{profile}' não encontrado. Usando perfil padrão.")
             session = boto3.Session()
             self.client = session.client("bedrock-runtime", region_name=region)
 
@@ -78,7 +79,16 @@ class OpenAICompatibleProvider(LLMProvider):
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        choices = data.get("choices")
+        if not choices:
+            raise RuntimeError(f"LLM retornou resposta sem choices: {data}")
+        message = choices[0].get("message")
+        if not message:
+            raise RuntimeError(f"LLM retornou choice sem message: {choices[0]}")
+        content = message.get("content")
+        if content is None:
+            raise RuntimeError(f"LLM retornou message sem content: {message}")
+        return content
 
 
 def create_provider(config) -> LLMProvider:
