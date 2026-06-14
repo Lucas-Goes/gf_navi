@@ -385,7 +385,7 @@ TOOL_DEFINITIONS = {
     "help": {
         "description": "Mostrar a lista de ferramentas disponíveis e como usar o assistente. Use quando o usuário pedir ajuda, help, o que você pode fazer, quais são suas funções.",
         "params": {},
-        "fn": lambda: {"tools": list(TOOL_DEFINITIONS.keys())},
+        "fn": lambda: _format_tool_descriptions(),
     },
 }
 
@@ -516,9 +516,11 @@ class AskAgent:
                 data = json.loads(raw)
                 tool = data.get("tool")
                 params = data.get("params", {})
-            except (json.JSONDecodeError, KeyError, TypeError):
-                yield "❌ Não foi possível determinar qual ferramenta usar para responder."
-                return
+                if tool not in TOOL_DEFINITIONS:
+                    raise KeyError(tool)
+            except Exception:
+                tool = "search_memories"
+                params = {"query": question}
 
         if tool not in TOOL_DEFINITIONS:
             yield "❌ Ferramenta desconhecida."
@@ -534,7 +536,10 @@ class AskAgent:
 
         yield f" ✅\n\n"
 
-        yield from _synthesize_answer_stream(question, result)
+        if isinstance(result, str):
+            yield result
+        else:
+            yield from _synthesize_answer_stream(question, result)
 
     def ask_sync(self, question: str) -> str:
         return "".join(self.ask(question))
