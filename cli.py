@@ -31,7 +31,6 @@ from app.config import settings
 from app.models import Preview
 from app.services.llm import create_provider
 from app.services.parser import ParserService
-from app.services.synthesizer import SynthesizerService
 from app.services.ingestion import IngestionService
 from app.services.search import SearchService
 from app.storage.sqlite_store import SQLiteStore
@@ -48,8 +47,7 @@ def get_services():
     parser = ParserService(llm)
     ingestion = IngestionService(sqlite, vector)
     search = SearchService(sqlite, vector)
-    synthesizer = SynthesizerService(llm)
-    return sqlite, vector, parser, ingestion, search, synthesizer
+    return sqlite, vector, parser, ingestion, search
 
 
 def cmd_add(args, services):
@@ -270,7 +268,7 @@ def cmd_correct(args, services):
 def cmd_ask(args, services):
     from app.services.ask_agent import AskAgent
 
-    _, vector, _, _, search, _ = services
+    _, vector, _, _, search = services
     question = " ".join(args.text) if isinstance(args.text, list) else args.text
 
     agent = AskAgent(search, vector)
@@ -282,7 +280,7 @@ def cmd_ask(args, services):
 
 
 def cmd_search(args, services):
-    _, _, _, _, search, _ = services
+    _, _, _, _, search = services
     query = " ".join(args.text) if isinstance(args.text, list) else args.text
 
     print("\n🔍 Buscando...\n")
@@ -303,7 +301,7 @@ def cmd_search(args, services):
 
 
 def cmd_list(args, services):
-    sqlite, _, _, _, _, _ = services
+    sqlite, *_ = services
     memories = sqlite.search_memories_sql(
         fact_type=args.type,
         closing_period=args.period,
@@ -321,7 +319,7 @@ def cmd_list(args, services):
 
 
 def cmd_get(args, services):
-    sqlite, _, _, _, _, _ = services
+    sqlite, *_ = services
     memory = sqlite.get_memory(args.id)
     if not memory:
         print("❌ Memória não encontrada.")
@@ -525,7 +523,7 @@ def main():
     else:
         services = get_services()
         if args.command == "sync-docs":
-            sqlite, vector, _, _, _, _ = services
+            sqlite, vector, *_ = services
             cmd_sync_docs(sqlite, vector)
         else:
             commands[args.command](args, services)

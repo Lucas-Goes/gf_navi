@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import json
-import re
 import unicodedata
-import uuid
-from pathlib import Path
-from datetime import datetime, timezone
 from typing import Any, Generator
 
 import requests
@@ -39,34 +35,24 @@ REGRAS:
 {{"tool": "nome_da_ferramenta", "params": {{...}}}}
 - Se nenhuma ferramenta for adequada, use search_memories com a pergunta como query."""
 
-SYNTHESIS_SYSTEM_PROMPT = """Você é um assistente institucional que responde perguntas sobre memórias de fechamento mensal de um banco.
+SYNTHESIS_SYSTEM_PROMPT = """Você é Navi, assistente de memória institucional do maior banco da América Latina. Você ajuda analistas de fechamento mensal a consultar decisões, regras, implementações e incidentes passados.
 
-Com base no RESULTADO DA CONSULTA abaixo (retornado por uma ferramenta), responda a pergunta do usuário de forma clara, direta e objetiva em português.
+Com base no contexto fornecido (memórias e documentos), responda à pergunta do usuário em português brasileiro.
 
-REGRAS:
-- CONFIE no resultado da consulta. Se a tool retornou dados USE-OS.
-- Se o resultado tem um "total": N, responda com esse número. Não diga que não encontrou.
-- Se o resultado é uma lista, apresente os itens de forma legível.
-- Se houver erro, explique o que aconteceu.
-- Se você não tem ferramenta para fazer o que o usuário pede, explique quais ferramentas você tem disponíveis.
-- Use markdown para formatar (negrito, listas, blocos de código)."""
-
-TOOL_LIST_PROMPT = """Você tem acesso às seguintes ferramentas:
-- count_memories: contar memórias com filtros
-- search_memories: buscar memórias por texto
-- get_memory_detail: detalhes de uma memória específica
-- list_periods: listar períodos de fechamento
-- list_fact_types: listar tipos de memória
-- add_memory: ADICIONAR uma nova memória
-- correct_memory: CORRIGIR uma memória existente
-- list_memories: LISTAR memórias com filtros
-- search_documents: buscar em documentos
-- sync_documents: sincronizar documentos"""
+Diretrizes:
+- Organize a resposta em tópicos claros
+- CONFIE no resultado da consulta. Se a ferramenta retornou dados USE-OS.
+- Cite as fontes usando [mem:id] para cada memória referenciada
+- Se houver correções, indique a versão mais recente
+- Inclua uma linha do tempo quando relevante
+- Se não houver informação suficiente, diga honestamente
+- Formate em markdown para legibilidade"""
 
 _SQLITE: SQLiteStore | None = None
 _VECTOR: VectorStore | None = None
 _LLM = None
 _INGESTION: IngestionService | None = None
+_SEARCH: SearchService | None = None
 
 
 def _get_sqlite():
@@ -96,6 +82,13 @@ def _get_ingestion():
     if _INGESTION is None:
         _INGESTION = IngestionService(_get_sqlite(), _get_vector())
     return _INGESTION
+
+
+def _get_search():
+    global _SEARCH
+    if _SEARCH is None:
+        _SEARCH = SearchService(_get_sqlite(), _get_vector())
+    return _SEARCH
 
 
 def _count_memories(active: bool | None = None, fact_type: str | None = None,
@@ -134,25 +127,30 @@ def _count_memories(active: bool | None = None, fact_type: str | None = None,
 
 def _search_memories(query: str, top_k: int = 5, fact_type: str | None = None,
                       closing_period: str | None = None) -> list[dict]:
-    sqlite = _get_sqlite()
-    memories = sqlite.search_memories_sql(
+    search = _get_search()
+    results = search.hybrid_search(
+        query=query,
+        top_k=top_k,
         fact_type=fact_type,
         closing_period=closing_period,
-        text_query=query,
-        limit=top_k,
     )
-    results = []
-    for m in memories:
-        results.append({
-            "id": m.id[:8],
-            "title": m.title,
-            "fact_type": m.fact_type.value,
-            "closing_period": m.closing_period,
-            "description": m.description[:300],
-            "decided_by": m.decided_by,
-            "is_active": m.is_active,
-        })
-    return results
+    return [
+        {
+            "id": r.memory.id[:8],
+            "title": r.memory.title,
+            "score": round(r.score, 3),
+            "fact_type": r.memory.fact_type.value,
+            "closing_period": r.memory.closing_period,
+            "description": r.memory.description[:500],
+            "decided_by": r.memory.decided_by,
+            "is_active": r.memory.is_active,
+            "superseded_by": r.memory.superseded_by,
+            "warnings": r.warnings,
+            "documents": [{"title": d.title, "filename": d.filename}
+                         for d in r.related_documents],
+        }
+        for r in results
+    ]
 
 
 def _get_memory_detail(id: str) -> dict | None:
@@ -216,6 +214,10 @@ def _add_memory(text: str, fact_type: str | None = None,
 
     ingestion = _get_ingestion()
     memory = ingestion.confirm(preview)
+
+    from app.doc_sync import _link_documents
+    _link_documents(_get_sqlite(), text, memory.id, preview.supersedes_id)
+
     return {
         "id": memory.id,
         "title": memory.title,
@@ -226,11 +228,40 @@ def _add_memory(text: str, fact_type: str | None = None,
     }
 
 
-def _correct_memory(id: str, text: str) -> dict:
+def _infer_memory(text: str) -> dict | None:
+    search = _get_search()
     sqlite = _get_sqlite()
-    existing = sqlite.get_memory(id)
-    if not existing:
-        return {"error": f"Memória com ID '{id}' não encontrada."}
+    results = search.hybrid_search(text, top_k=5)
+    for r in results:
+        if r.memory.is_active:
+            return _get_memory_detail(r.memory.id)
+    if not results:
+        return None
+    best = results[0].memory
+    if best.superseded_by:
+        superseder = sqlite.get_memory(best.superseded_by)
+        if superseder and superseder.is_active:
+            return _get_memory_detail(superseder.id)
+    if not best.is_active:
+        return None
+    return _get_memory_detail(best.id)
+
+
+def _correct_memory(text: str, id: str | None = None) -> dict:
+    sqlite = _get_sqlite()
+
+    if id:
+        existing = sqlite.get_memory(id)
+        if not existing:
+            return {"error": f"Memória com ID '{id}' não encontrada."}
+    else:
+        inferred = _infer_memory(text)
+        if not inferred:
+            return {"error": "Não foi possível identificar qual memória corrigir. Forneça um ID."}
+        existing_id = inferred.get("id", "")[:8]
+        existing = sqlite.get_memory(existing_id)
+        if not existing:
+            return {"error": "Memória inferida não encontrada."}
 
     parser = ParserService(_get_llm())
     preview = parser.parse(text)
@@ -241,6 +272,10 @@ def _correct_memory(id: str, text: str) -> dict:
 
     ingestion = _get_ingestion()
     memory = ingestion.confirm(preview)
+
+    from app.doc_sync import _link_documents
+    _link_documents(sqlite, text, memory.id, preview.supersedes_id)
+
     return {
         "id": memory.id,
         "supersedes_id": existing.id,
@@ -317,7 +352,7 @@ TOOL_DEFINITIONS = {
         "fn": _count_memories,
     },
     "search_memories": {
-        "description": "Buscar memórias por texto. Use como fallback quando a pergunta não se encaixar em outras ferramentas.",
+        "description": "Buscar memórias por texto com busca semântica (embedding + SQL). Use como fallback quando a pergunta não se encaixar em outras ferramentas.",
         "params": {
             "query": {"type": "string", "description": "Termo de busca", "required": True},
             "top_k": {"type": "integer", "description": "Número de resultados (max 10)", "required": False},
@@ -356,8 +391,8 @@ TOOL_DEFINITIONS = {
     "correct_memory": {
         "description": "Corrigir/substituir uma memória existente. Use quando o usuário pedir para corrigir, atualizar, alterar ou modificar uma memória.",
         "params": {
-            "id": {"type": "string", "description": "ID ou prefixo de 8+ caracteres da memória a ser corrigida", "required": True},
             "text": {"type": "string", "description": "Nova descrição corrigida em linguagem natural", "required": True},
+            "id": {"type": "string", "description": "ID ou prefixo de 8+ caracteres da memória a ser corrigida (opcional — se omitido, o sistema infere automaticamente)", "required": False},
         },
         "fn": _correct_memory,
     },
@@ -424,35 +459,14 @@ def _call_llm_stream(prompt: str, system: str = "", max_tokens: int = 2000) -> G
         yield f"\n\n❌ Erro no LLM: {e}"
 
 
-def _select_tool(question: str) -> tuple[str, dict] | None:
-    tool_desc = _format_tool_descriptions()
-    prompt = TOOL_SYSTEM_PROMPT.format(tool_descriptions=tool_desc)
-    user_prompt = f"Pergunta do usuário: {question}\n\nQual ferramenta usar?"
-    try:
-        raw = _call_llm(prompt=user_prompt, system=prompt, max_tokens=500)
-        raw = raw.strip()
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1:
-            raw = raw[start:end + 1]
-        data = json.loads(raw)
-        tool = data.get("tool")
-        params = data.get("params", {})
-        if tool in TOOL_DEFINITIONS:
-            return tool, params
-    except (json.JSONDecodeError, KeyError, TypeError):
-        pass
-    return None
-
-
 STOPWORDS = set("""a ante ao aos após até com contra de desde em entre
 para perante por sem sob sobre trás o a os as da das do dos dum duns
 num nums numa um uma umas uns ele ela eles elas me te se nos vos
 lhe lhes eu tu você vocês o a os as meu minha meus minhas teu tua
 teus tuas seu sua seus suas nosso nossa nossos nossas isso isto esse
-essa esses essas este esta estes estas aquele aquela aqueles aquelas
-aquilo que qual quem como quanto quanta quantos quantas onde aonde
-donde quando porque porquê pois já também ainda muito pouco mais menos
+essa esses essas este esta estes estas aquele aquela aquelas aquilo
+que qual quem como quanto quanta quantos quantas onde aonde donde
+quando porque porquê pois já também ainda muito pouco mais menos
 demais todo toda todos todas algum alguma alguns algumas nenhum nenhuma
 nenhuns nenhumas certo certa certos certas outro outra outros outras
 vário vária vários várias tanto tanta tantos quantas quanto quanta
@@ -511,18 +525,43 @@ def _execute_tool(tool: str, params: dict) -> Any:
         return {"error": str(e)}
 
 
-def _synthesize_answer(question: str, tool_result: Any) -> str:
-    result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
-    system = f"{SYNTHESIS_SYSTEM_PROMPT}\n\n{TOOL_LIST_PROMPT}"
-    prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
-    return _call_llm(prompt=prompt, system=system, max_tokens=1000)
+def _build_search_context(result: list[dict]) -> str:
+    if not result:
+        return "(nenhum resultado)"
+    parts = []
+    for r in result:
+        header = f"[mem:{r['id']}]"
+        lines = [
+            f"---\n{header}",
+            f"Título: {r['title']}",
+            f"Score: {r.get('score', '—')}",
+            f"Tipo: {r['fact_type']}",
+            f"Período: {r['closing_period']}",
+            f"Descrição: {r.get('description', '')[:500]}",
+            f"Decidido por: {r.get('decided_by') or '—'}",
+        ]
+        if r.get("warnings"):
+            lines.append(f"Avisos: {'; '.join(r['warnings'])}")
+        if r.get("documents"):
+            for d in r["documents"]:
+                lines.append(f"  Documento relacionado: {d['title']} ({d['filename']})")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
-def _synthesize_answer_stream(question: str, tool_result: Any) -> Generator[str, None, None]:
-    result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
-    system = f"{SYNTHESIS_SYSTEM_PROMPT}\n\n{TOOL_LIST_PROMPT}"
-    prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
-    yield from _call_llm_stream(prompt=prompt, system=system, max_tokens=2000)
+def _synthesize_answer_stream(question: str, tool_result: Any, tool_name: str = "") -> Generator[str, None, None]:
+    if tool_name == "search_memories" and isinstance(tool_result, list):
+        context = _build_search_context(tool_result)
+        prompt = (
+            f"Contexto das memórias institucionais:\n{context}\n\n"
+            f"Pergunta do usuário:\n{question}\n\n"
+            f"Resposta:"
+        )
+        yield from _call_llm_stream(prompt=prompt, system=SYNTHESIS_SYSTEM_PROMPT, max_tokens=2000)
+    else:
+        result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
+        prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
+        yield from _call_llm_stream(prompt=prompt, system=SYNTHESIS_SYSTEM_PROMPT, max_tokens=2000)
 
 
 class AskAgent:
@@ -590,13 +629,14 @@ class AskAgent:
         if _is_empty_result(result) and tool not in ("help", "count_memories", "list_periods", "list_fact_types", "add_memory", "correct_memory", "sync_documents"):
             new_query = _extract_keywords(question) or question
             result = _execute_tool("search_memories", {"query": new_query})
+            tool = "search_memories"
 
         yield f" ✅\n\n"
 
         if isinstance(result, str):
             yield result
         else:
-            yield from _synthesize_answer_stream(question, result)
+            yield from _synthesize_answer_stream(question, result, tool)
 
     def ask_sync(self, question: str) -> str:
         return "".join(self.ask(question))
