@@ -3,7 +3,8 @@ Navi CLI — Cérebro Institucional
 
 Uso:
   python cli.py add <texto>        Adicionar nova memória
-  python cli.py correct <id> <texto>  Corrigir memória (faz merge automático)
+   python cli.py correct <id> <texto>  Corrigir memória (com ID explícito)
+   python cli.py correct [-i ID] <texto>  Corrigir memória (ID opcional, infere se omitido)
   python cli.py ask <pergunta>     Consultar memórias
   python cli.py search <termo>     Buscar memórias (sem LLM)
   python cli.py list [--type T] [--period YYYY-MM]  Listar memórias
@@ -83,7 +84,7 @@ def cmd_add(args, services):
         print("⏭️  Cancelado.")
 
 
-CORRECT_PROMPT = """Você é um analista de memória institucional. O usuário quer corrigir/atualizar uma memória existente.
+CORRECT_PROMPT = """Você é um analista de memória institucional. O usuário quer atualizar uma memória existente com novas informações.
 
 MEMÓRIA ORIGINAL:
 Título: {title}
@@ -94,23 +95,79 @@ Decidido por: {decided_by}
 Solicitado por: {requested_by}
 Aprovado por: {approved_by}
 
-TEXTO DE CORREÇÃO DO USUÁRIO:
+INSTRUÇÃO DO USUÁRIO:
 {correction_text}
 
-Gere uma nova versão completa da memória (incorporando a correção) no JSON abaixo.
-Preencha TODOS os campos. Se um campo não foi alterado, mantenha o valor original.
+Regras:
+1. Incorpore as novas informações na descrição de forma natural e coesa, reescrevendo o texto completo — NÃO se limite a concatenar.
+2. Ignore meta-instruções do tipo "adicione isso", "inclua aquilo", "atualize para". Extraia apenas o conteúdo factual relevante.
+3. Se a instrução não alterar um campo específico, mantenha o valor original.
+4. Se a instrução mencionar novos responsáveis (decidido/solicitado/aprovado), atualize os campos correspondentes.
+5. Preserve o formato institucional e profissional.
+
+Gere o JSON completo da nova versão:
 {json_schema}"""
 
 
+def _infer_memory(sqlite, search, text: str):
+    """Tenta inferir qual memória o usuário quer corrigir via busca semântica.
+    Prefere memórias ativas; se a melhor correspondência for obsoleta,
+    sugere a versão que a substitui."""
+    results = search.hybrid_search(text, top_k=3)
+    if not results:
+        return None
+
+    for r in results[:3]:
+        if r.memory.is_active:
+            return r.memory
+
+    best = results[0].memory
+    if best.superseded_by:
+        superseder = sqlite.get_memory(best.superseded_by)
+        if superseder and superseder.is_active:
+            print(f"   ⚠️  A memória '{best.title}' foi corrigida por uma versão mais recente.")
+            print(f"   💡 Usando a versão ativa: {superseder.title} ({superseder.id[:8]})")
+            return superseder
+
+    return best
+
+
 def cmd_correct(args, services):
-    sqlite, _, parser, ingestion, _, _ = services
+    sqlite, _, parser, ingestion, search, _ = services
     memory_id = args.id
     text = " ".join(args.text) if isinstance(args.text, list) else args.text
 
-    old = sqlite.get_memory(memory_id)
-    if not old:
-        print(f"❌ Memória {memory_id} não encontrada.")
-        return
+    if memory_id:
+        old = sqlite.get_memory(memory_id)
+        if not old:
+            print(f"❌ Memória {memory_id} não encontrada.")
+            return
+    else:
+        first_word = args.text[0].lower()
+        if len(first_word) >= 6 and all(c in "0123456789abcdef" for c in first_word):
+            candidate = sqlite.get_memory(first_word)
+            if candidate:
+                memory_id = first_word
+                text = " ".join(args.text[1:])
+                old = candidate
+
+        if not memory_id:
+            print("\n🔍 Nenhum ID informado. Buscando memória mais relevante...\n")
+            old = _infer_memory(sqlite, search, text)
+            if not old:
+                print("❌ Não foi possível identificar qual memória corrigir.")
+                return
+            print(f"🔍 Memória identificada:\n")
+            print(f"   ID: {old.id[:8]}")
+            print(f"   Título: {old.title}")
+            print(f"   Tipo: {old.fact_type.value}")
+            print(f"   Período: {old.closing_period}")
+            print(f"   Descrição: {old.description[:200]}{'...' if len(old.description) > 200 else ''}")
+            print()
+            conf = input("❓ É esta memória que deseja corrigir? (s/N): ").strip().lower()
+            if conf != "s":
+                print("⏭️  Cancelado.")
+                return
 
     print(f"\n📌 Memória original: {old.title} ({old.id[:8]})\n")
 
@@ -163,7 +220,7 @@ def cmd_correct(args, services):
     ingestion.store_preview(preview)
 
     _show_preview(preview)
-    print(f"\n⚠️  Esta memória SUBSTITUIRÁ {memory_id[:8]} - {old.title}")
+    print(f"\n⚠️  Esta memória SUBSTITUIRÁ {old.id[:8]} - {old.title}")
 
     confirm = input("\n❓ Confirmar correção? (s/N): ").strip().lower()
     if confirm == "s":
@@ -453,8 +510,8 @@ def main():
 
     sub.add_parser("sync-docs", help="Sincronizar documentos")
 
-    p_correct = sub.add_parser("correct", help="Corrigir memória (faz merge com original)")
-    p_correct.add_argument("id", help="ID da memória a corrigir")
+    p_correct = sub.add_parser("correct", help="Corrigir memória (ID opcional; se omitido, infere automaticamente)")
+    p_correct.add_argument("-i", "--id", help="ID da memória a corrigir (opcional)")
     p_correct.add_argument("text", nargs="+", help="Texto da correção")
 
     p_prov = sub.add_parser("provider", help="Ver/trocar provider LLM")
