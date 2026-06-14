@@ -443,6 +443,18 @@ def _select_tool(question: str) -> tuple[str, dict] | None:
     return None
 
 
+def _is_empty_result(result: Any) -> bool:
+    if result is None:
+        return True
+    if isinstance(result, list) and len(result) == 0:
+        return True
+    if isinstance(result, dict) and result.get("total", 1) == 0:
+        return True
+    if isinstance(result, dict) and "error" in result:
+        return True
+    return False
+
+
 def _execute_tool(tool: str, params: dict) -> Any:
     t = TOOL_DEFINITIONS.get(tool)
     if not t:
@@ -537,6 +549,9 @@ class AskAgent:
         if isinstance(result, dict) and "error" in result:
             yield f" {result['error']}\n"
             return
+
+        if _is_empty_result(result) and tool not in ("help", "count_memories", "list_periods", "list_fact_types", "add_memory", "correct_memory", "sync_documents"):
+            result = _execute_tool("search_memories", {"query": question})
 
         yield f" ✅\n\n"
 
