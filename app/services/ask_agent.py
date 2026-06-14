@@ -449,6 +449,10 @@ def _execute_tool(tool: str, params: dict) -> Any:
         return {"error": f"Ferramenta '{tool}' não encontrada."}
     fn = t["fn"]
     try:
+        missing = [n for n, p in t["params"].items()
+                   if p.get("required") and n not in params]
+        if missing:
+            return {"error": f"Parâmetros obrigatórios faltando: {', '.join(missing)}"}
         valid_params = {}
         for pname in t["params"]:
             if pname in params:
@@ -490,8 +494,8 @@ class AskAgent:
         if any(w in q for w in add_words):
             return ("add_memory", {"text": question})
 
-        correct_words = ["corrige", "corrija", "corrigir", "atualiza", "altera",
-                         "modifica", "muda", "correção", "corrigir memória"]
+        correct_words = ["corrige", "corrija", "corrigir", "correção",
+                         "corrigir memória", "corrigir memoria"]
         if any(w in q for w in correct_words):
             return ("correct_memory", {"text": question})
 
