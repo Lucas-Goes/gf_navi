@@ -688,21 +688,22 @@ def cmd_db(args, services):
             print(f"✅ Export CSV salvo em: {out_dir}")
 
     elif cmd == "help":
+        pad = 25
         Console().print(
             "\n[bold cyan]🗄️  Navi — Database Viewer[/bold cyan]\n"
-            "  [cyan]db[/cyan]                     Dashboard com contagens\n"
-            "  [cyan]db help[/cyan]                Mostrar esta ajuda\n"
-            "  [cyan]db tables[/cyan]              Listar tabelas com schema SQL\n"
-            "  [cyan]db memories[/cyan]            Listar memórias ativas\n"
-            "  [cyan]db memories --all[/cyan]      Listar todas (ativas e inativas)\n"
-            "  [cyan]db documents[/cyan]           Listar documentos/chunks\n"
-            "  [cyan]db links[/cyan]               Vínculos memória ↔ documento\n"
-            "  [cyan]db memory <id>[/cyan]         Detalhes completos de uma memória\n"
-            "  [cyan]db document <id>[/cyan]       Conteúdo completo de um documento\n"
-            "  [cyan]db export json[/cyan]         Exportar tudo para JSON\n"
-            "  [cyan]db export csv[/cyan]          Exportar tudo para CSV\n"
-            "  [cyan]db query <sql>[/cyan]           Executar SELECT\n"
-            "  [cyan]db query --force <sql>[/cyan]   Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
+            f"  [cyan]db[/cyan]{" " * (pad - 2)} — Dashboard com contagens\n"
+            f"  [cyan]db help[/cyan]{" " * (pad - 7)} — Mostrar esta ajuda\n"
+            f"  [cyan]db tables[/cyan]{" " * (pad - 9)} — Listar tabelas com schema SQL\n"
+            f"  [cyan]db memories[/cyan]{" " * (pad - 11)} — Listar memórias ativas\n"
+            f"  [cyan]db memories --all[/cyan]{" " * (pad - 17)} — Listar todas (ativas e inativas)\n"
+            f"  [cyan]db documents[/cyan]{" " * (pad - 12)} — Listar documentos/chunks\n"
+            f"  [cyan]db links[/cyan]{" " * (pad - 8)} — Vínculos memória ↔ documento\n"
+            f"  [cyan]db memory <id>[/cyan]{" " * (pad - 14)} — Detalhes completos de uma memória\n"
+            f"  [cyan]db document <id>[/cyan]{" " * (pad - 16)} — Conteúdo completo de um documento\n"
+            f"  [cyan]db export json[/cyan]{" " * (pad - 14)} — Exportar tudo para JSON\n"
+            f"  [cyan]db export csv[/cyan]{" " * (pad - 13)} — Exportar tudo para CSV\n"
+            f"  [cyan]db query <sql>[/cyan]{" " * (pad - 14)} — Executar SELECT\n"
+            f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 23)} — Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
         )
 
     elif cmd == "query":
@@ -748,17 +749,18 @@ def cmd_db(args, services):
         console.print(table)
         console.print()
         console.print("[dim]Comandos disponíveis:[/dim]")
-        console.print("  [cyan]db tables[/cyan]          — Listar tabelas com schema")
-        console.print("  [cyan]db memories[/cyan]         — Listar memórias ativas")
-        console.print("  [cyan]db memories --all[/cyan]   — Listar todas (ativas e inativas)")
-        console.print("  [cyan]db documents[/cyan]        — Listar documentos")
-        console.print("  [cyan]db links[/cyan]            — Vínculos memória ↔ documento")
-        console.print("  [cyan]db memory <id>[/cyan]      — Detalhes de uma memória")
-        console.print("  [cyan]db document <id>[/cyan]    — Detalhes de um documento")
-        console.print("  [cyan]db export json[/cyan]      — Exportar tudo para JSON")
-        console.print("  [cyan]db export csv[/cyan]       — Exportar tudo para CSV")
-        console.print("  [cyan]db query <sql>[/cyan]           — Executar SELECT")
-        console.print("  [cyan]db query --force <sql>[/cyan]   — Executar qualquer SQL (DML)")
+        pad = 25
+        console.print(f"  [cyan]db tables[/cyan]{" " * (pad - 9)} — Listar tabelas com schema")
+        console.print(f"  [cyan]db memories[/cyan]{" " * (pad - 11)} — Listar memórias ativas")
+        console.print(f"  [cyan]db memories --all[/cyan]{" " * (pad - 17)} — Listar todas (ativas e inativas)")
+        console.print(f"  [cyan]db documents[/cyan]{" " * (pad - 12)} — Listar documentos")
+        console.print(f"  [cyan]db links[/cyan]{" " * (pad - 8)} — Vínculos memória ↔ documento")
+        console.print(f"  [cyan]db memory <id>[/cyan]{" " * (pad - 14)} — Detalhes de uma memória")
+        console.print(f"  [cyan]db document <id>[/cyan]{" " * (pad - 16)} — Detalhes de um documento")
+        console.print(f"  [cyan]db export json[/cyan]{" " * (pad - 14)} — Exportar tudo para JSON")
+        console.print(f"  [cyan]db export csv[/cyan]{" " * (pad - 13)} — Exportar tudo para CSV")
+        console.print(f"  [cyan]db query <sql>[/cyan]{" " * (pad - 14)} — Executar SELECT")
+        console.print(f"  [cyan]db query --force <sql>[/cyan]{" " * (pad - 23)} — Executar qualquer SQL (DML)")
         print()
 
     conn.close()
