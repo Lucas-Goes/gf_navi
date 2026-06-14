@@ -518,6 +518,8 @@ def cmd_db(args, services):
 
     conn = _db_conn()
     parts = args.command_db
+    force = "--force" in parts
+    parts = [p for p in parts if p != "--force"]
     cmd = parts[0] if parts else None
     extra = parts[1:] if len(parts) > 1 else []
 
@@ -699,8 +701,8 @@ def cmd_db(args, services):
             "  [cyan]db document <id>[/cyan]       Conteúdo completo de um documento\n"
             "  [cyan]db export json[/cyan]         Exportar tudo para JSON\n"
             "  [cyan]db export csv[/cyan]          Exportar tudo para CSV\n"
-            "  [cyan]db query <sql>[/cyan]         Executar SELECT (somente leitura)\n"
-            "  [cyan]db --force query <sql>[/cyan]  Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
+            "  [cyan]db query <sql>[/cyan]           Executar SELECT\n"
+            "  [cyan]db query --force <sql>[/cyan]   Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
         )
 
     elif cmd == "query":
@@ -708,7 +710,7 @@ def cmd_db(args, services):
         if not sql:
             Console().print("[red]Informe a SQL: db query <sql>[/red]")
             return
-        if not sql.strip().upper().startswith("SELECT") and not args.force:
+        if not sql.strip().upper().startswith("SELECT") and not force:
             Console().print("[red]Apenas consultas SELECT são permitidas. Use --force para executar mesmo assim.[/red]")
             return
         console = Console()
@@ -755,8 +757,8 @@ def cmd_db(args, services):
         console.print("  [cyan]db document <id>[/cyan]    — Detalhes de um documento")
         console.print("  [cyan]db export json[/cyan]      — Exportar tudo para JSON")
         console.print("  [cyan]db export csv[/cyan]       — Exportar tudo para CSV")
-        console.print("  [cyan]db query <sql>[/cyan]      — Executar SELECT")
-        console.print("  [cyan]db --force query <sql>[/cyan] — Executar qualquer SQL (DML)")
+        console.print("  [cyan]db query <sql>[/cyan]           — Executar SELECT")
+        console.print("  [cyan]db query --force <sql>[/cyan]   — Executar qualquer SQL (DML)")
         print()
 
     conn.close()
@@ -800,11 +802,10 @@ def main():
     p_prov.add_argument("name", nargs="?", help="nvidia, bedrock, ollama")
 
     p_db = sub.add_parser("db", help="Visualizar/exportar banco de dados")
-    p_db.add_argument("command_db", nargs="*", default=[], help="Subcomando + argumentos (ex: memories, memory <id>, export json)")
+    p_db.add_argument("command_db", nargs=argparse.REMAINDER, default=[], help="Subcomando + argumentos (ex: memories, memory <id>, export json)")
     p_db.add_argument("--all", action="store_true", help="Incluir registros inativos")
     p_db.add_argument("--limit", type=int, default=100, help="Limite de linhas")
     p_db.add_argument("--format", choices=["json", "csv"], default="json", help="Formato de exportação")
-    p_db.add_argument("--force", action="store_true", help="Permite INSERT/UPDATE/DELETE no db query")
 
     args = parser.parse_args()
 
