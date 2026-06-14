@@ -700,6 +700,7 @@ def cmd_db(args, services):
             "  [cyan]db export json[/cyan]         Exportar tudo para JSON\n"
             "  [cyan]db export csv[/cyan]          Exportar tudo para CSV\n"
             "  [cyan]db query <sql>[/cyan]         Executar SELECT (somente leitura)\n"
+            "  [cyan]db --force query <sql>[/cyan]  Executar qualquer SQL (INSERT/UPDATE/DELETE)\n"
         )
 
     elif cmd == "query":
@@ -754,7 +755,8 @@ def cmd_db(args, services):
         console.print("  [cyan]db document <id>[/cyan]    — Detalhes de um documento")
         console.print("  [cyan]db export json[/cyan]      — Exportar tudo para JSON")
         console.print("  [cyan]db export csv[/cyan]       — Exportar tudo para CSV")
-        console.print("  [cyan]db query <sql>[/cyan]      — Executar SQL arbitrário")
+        console.print("  [cyan]db query <sql>[/cyan]      — Executar SELECT")
+        console.print("  [cyan]db --force query <sql>[/cyan] — Executar qualquer SQL (DML)")
         print()
 
     conn.close()
