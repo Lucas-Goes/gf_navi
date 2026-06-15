@@ -70,8 +70,9 @@ def cmd_db(conn, parts: list[str], show_all: bool, limit: int, fmt: str):
         if not rows:
             console.print("[yellow]Nenhuma memória encontrada.[/yellow]")
             return
-        _db_table(console, f"Memórias ({len(rows)} registro(s))", ["ID", "Título", "Tipo", "Período", "Ativo", "Substituído por"], [
+        _db_table(console, f"Memórias ({len(rows)} registro(s))", ["ID", "Título", "Tipo", "Período", "Tags", "Ativo", "Substituído por"], [
             (r["id"][:8], r["title"][:45], r["fact_type"], r["closing_period"],
+             r["tags"] if r["tags"] else "—",
              "✅" if r["is_active"] else "❌",
              r["superseded_by"][:8] if r["superseded_by"] else "—")
             for r in rows
@@ -137,6 +138,7 @@ def cmd_db(conn, parts: list[str], show_all: bool, limit: int, fmt: str):
         console.print(f"   [dim]ID:[/dim] {row['id']}")
         console.print(f"   [dim]Tipo:[/dim] {row['fact_type']}")
         console.print(f"   [dim]Período:[/dim] {row['closing_period']}")
+        console.print(f"   [dim]Tags:[/dim] {row['tags'] if row['tags'] else '—'}")
         console.print(f"   [dim]Ativo:[/dim] {'✅ Sim' if row['is_active'] else '❌ Não'}")
         console.print(f"   [dim]Registrado por:[/dim] {row['registered_by']}")
         console.print(f"   [dim]Data registro:[/dim] {row['registration_date'][:19]}")

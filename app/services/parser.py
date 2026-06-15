@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Optional
 
 from app.models import FactType, Preview
+from app.services.utils import clean_tag_list
+from app.siglas import expand_tags
 
 PARSER_SYSTEM_PROMPT = """Você é um analista de memória institucional especializado em extrair informações estruturadas de textos sobre decisões, regras, implementações e incidentes do fechamento mensal de um banco.
 
@@ -16,7 +18,7 @@ Extraia os campos conforme o schema JSON abaixo:
   "fact_type": "enum: rule_change | decision | implementation | incident | other",
   "closing_period": "string (obrigatório, formato YYYY-MM do período de fechamento)",
   "description": "string (obrigatório, 1 a 3 parágrafos detalhando o fato)",
-  "tags": "array de strings (opcional, lista de palavras-chave que categorizam a memória, ex: ['compliance', 'crédito', 'sistema'], máximo 5 tags)",
+  "tags": "array de strings (obrigatório, lista de 1 a 5 palavras-chave que categorizam a memória, ex: ['compliance', 'crédito', 'sistema'], máximo 5 tags)",
   "decided_by": "string | null (quem decidiu, se mencionado)",
   "requested_by": "string | null (quem solicitou, se mencionado)",
   "approved_by": "string | null (quem aprovou, se mencionado)",
@@ -31,7 +33,7 @@ Regras:
 - closing_period é obrigatório no formato YYYY-MM
 - Se o texto mencionar correção de algo anterior, marque is_correction=true
 - Se houver menção explícita a um ID de memória sendo corrigido, preencha supersedes_id
-- tags: extraia de 1 a 5 palavras-chave que representem os assuntos principais (ex: compliance, crédito, sistema, processo, relatório). Use apenas o radical da palavra. Cada tag deve ter no máximo 20 caracteres.
+- tags: OBRIGATÓRIO. Extraia de 2 a 5 palavras-chave que representem os assuntos principais (ex: compliance, crédito, sistema, processo, relatório). Use apenas o radical da palavra. Cada tag deve ter no máximo 20 caracteres. NUNCA deixe vazio.
 - Retorne APENAS o JSON, sem texto adicional."""
 
 
@@ -144,8 +146,22 @@ class ParserService:
         raw_tags = data.get("tags", [])
         if isinstance(raw_tags, str):
             raw_tags = [raw_tags]
-        cleaned_tags = [str(t).strip().lower()[:20] for t in raw_tags if t and str(t).strip()]
-        cleaned_tags = cleaned_tags[:5]
+        cleaned_tags = clean_tag_list(raw_tags)
+        if not cleaned_tags:
+            from app.services.utils import extract_keywords
+            kw = extract_keywords(f"{data.get('title', '')} {description}")
+            cleaned_tags = kw.split()[:5] if kw else []
+        else:
+            seen = set()
+            deduped = []
+            for t in cleaned_tags:
+                if t not in seen:
+                    seen.add(t)
+                    deduped.append(t)
+            cleaned_tags = deduped[:5]
+        expanded = expand_tags(cleaned_tags)
+        if len(expanded) > len(cleaned_tags):
+            cleaned_tags = expanded[:5]
 
         preview = Preview(
             title=data.get("title", "(sem título)")[:100],

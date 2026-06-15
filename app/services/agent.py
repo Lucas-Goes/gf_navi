@@ -5,8 +5,9 @@ from typing import Any, Generator
 
 from app.services.tools import (
     TOOL_DEFINITIONS, _execute_tool, _format_tool_descriptions,
-    _is_empty_result, _extract_keywords,
+    _is_empty_result,
 )
+from app.services.utils import extract_keywords
 from app.services.synthesis import synthesize_answer_stream, _call_llm
 
 MAX_STEPS = 5
@@ -101,7 +102,7 @@ class ReActAgent:
                 "result": result,
             })
             if _is_empty_result(result):
-                new_query = _extract_keywords(self.question) or self.question
+                new_query = extract_keywords(self.question) or self.question
                 yield f"  ⚙️ Passo {step} sem resultados. Refinando busca...\n"
                 result2 = _execute_tool("search_memories", {"query": new_query})
                 if not (isinstance(result2, dict) and "error" in result2):

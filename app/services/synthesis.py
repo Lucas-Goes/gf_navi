@@ -106,29 +106,45 @@ def _format_details(mem: dict) -> str:
         f"Aprovado por  {mem.get('approved_by') or '—'}",
     ])
     return "\n".join(lines)
-    return "\n".join(lines)
 
 
 def _format_chain(chain: list[dict]) -> str:
     if not chain or len(chain) < 2:
         return ""
     lines = ["━━━ Histórico de Correções ━━━"]
-    items = list(reversed(chain))
-    for i, item in enumerate(items):
-        v = i + 1
+    n = len(chain)
+    for i, item in enumerate(chain):
+        v = n - i
         short_id = item["id"][:8]
         dt = (item.get("registration_date") or "")[:10]
-        marker = " ← atual" if i == len(items) - 1 else ""
+        is_active = item.get("is_active", False)
+        marker = " ← atual" if is_active else ""
         item_tags = item.get("tags", [])
         tag_str = f" [{', '.join(item_tags)}]" if item_tags else ""
-        lines.append(f"v{v} · {short_id} · {dt}{tag_str}")
-        lines.append(f"{item['title']}{marker}")
-        if i < len(items) - 1:
-            lines.append(f"└─ substituída por v{v + 1}")
-    return "\n".join(lines)
+        lines.append(f"v{v} · {short_id} · {dt}{tag_str}{marker}")
+        lines.append(f"{item['title']}")
+        if not is_active and i > 0:
+            prev_v = v + 1
+            prev_id = chain[i - 1]["id"][:8]
+            lines.append(f"substituída por: v{prev_v} · {prev_id}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def synthesize_answer_stream(question: str, tool_result: Any, tool_name: str = "") -> Generator[str, None, None]:
+    if tool_name in ("help",):
+        result_str = json.dumps(tool_result, ensure_ascii=False) if not isinstance(tool_result, str) else tool_result
+        yield result_str + "\n"
+        return
+
+    if tool_name == "list_memories" and isinstance(tool_result, list) and tool_result:
+        yield "📋 **Memórias encontradas:**\n\n"
+        for r in tool_result:
+            tags_str = f" [`{', '.join(r.get('tags', []))}`]" if r.get("tags") else ""
+            yield f"- **{r['title']}** ({r['closing_period']}, {r['fact_type']}){tags_str}\n"
+        yield "\n"
+        return
+
     if tool_name == "search_memories" and isinstance(tool_result, list) and tool_result:
         mem = tool_result[0]
         chain = mem.get("correction_chain", [])
@@ -150,9 +166,26 @@ def synthesize_answer_stream(question: str, tool_result: Any, tool_name: str = "
         if chain_block:
             yield f"{chain_block}\n\n"
         yield f"{details_block}\n"
-    elif isinstance(tool_result, list) and not tool_result:
+        if len(tool_result) > 1:
+            yield "\n🔍 **Outros resultados:**\n\n"
+            for r in tool_result[1:]:
+                tags_str = f" [`{', '.join(r.get('tags', []))}`]" if r.get("tags") else ""
+                yield f"- **{r['title']}** ({r['closing_period']}, {r['fact_type']}, score: {r.get('score', '—')}){tags_str}\n"
+            yield "\n"
+        return
+
+    if isinstance(tool_result, list) and not tool_result:
         yield "Não encontrei registros sobre isso nas memórias institucionais.\n"
-    else:
-        result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
-        prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
-        yield from _call_llm_stream(prompt=prompt, system=SYNTHESIS_SYSTEM_PROMPT, max_tokens=2000)
+        return
+
+    if isinstance(tool_result, list) and tool_result:
+        yield "📋 **Memórias encontradas:**\n\n"
+        for r in tool_result:
+            tags_str = f" [`{', '.join(r.get('tags', []))}`]" if r.get("tags") else ""
+            yield f"- **{r['title']}** ({r['closing_period']}, {r['fact_type']}){tags_str}\n"
+        yield "\n"
+        return
+
+    result_str = json.dumps(tool_result, ensure_ascii=False, indent=2)
+    prompt = f"Pergunta do usuário: {question}\n\nResultado da consulta:\n{result_str}\n\nResponda em português:"
+    yield from _call_llm_stream(prompt=prompt, system=SYNTHESIS_SYSTEM_PROMPT, max_tokens=2000)

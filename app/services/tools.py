@@ -6,7 +6,7 @@ Separado de ask_agent.py para evitar circular import com agent.py.
 from __future__ import annotations
 
 import json
-import unicodedata
+import re
 from typing import Any
 
 import requests
@@ -17,6 +17,9 @@ from app.services.ingestion import IngestionService
 from app.services.llm import create_provider
 from app.services.parser import ParserService
 from app.services.search import SearchService
+from app.services.utils import clean_tags, remove_accents, extract_keywords
+from app.siglas import expand_query as expand_siglas_query
+from app.doc_sync import _link_documents
 from app.storage.sqlite_store import SQLiteStore
 from app.storage.vector_store import VectorStore
 
@@ -80,7 +83,7 @@ def _count_memories(active: bool | None = None, fact_type: str | None = None,
         conditions.append("closing_period = ?")
         params.append(closing_period)
     if tags:
-        tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+        tag_list = clean_tags(tags)
         tag_clauses = []
         for t in tag_list:
             tag_clauses.append("tags LIKE ?")
@@ -137,13 +140,29 @@ def _search_memories(query: str, top_k: int = 3, fact_type: str | None = None,
                       tags: str | None = None) -> list[dict]:
     search = _get_search()
     sqlite = _get_sqlite()
-    tag_filter = [t.strip().lower() for t in tags.split(",") if t.strip()] if tags else None
+    tag_filter = clean_tags(tags) if tags else None
+    expanded_query = expand_siglas_query(query)
     results = search.hybrid_search(
-        query=query, top_k=top_k, fact_type=fact_type, closing_period=closing_period,
+        query=expanded_query, top_k=top_k, fact_type=fact_type, closing_period=closing_period,
         tags=tag_filter,
     )
     superseder_ids = {r.memory.supersedes_id for r in results if r.memory.supersedes_id}
     filtered = [r for r in results if r.memory.id not in superseder_ids]
+
+    norm_query = remove_accents(query.lower())
+    long_terms = [t for t in norm_query.split() if len(t) >= 3]
+    if long_terms:
+        from app.siglas import expand_terms as expand_siglas_terms
+        all_terms = expand_siglas_terms(long_terms)
+        def _has_term(text: str) -> bool:
+            normalized = remove_accents(text.lower())
+            words = re.sub(r"[^a-z0-9]", " ", normalized).split()
+            return any(t in words for t in all_terms)
+        filtered = [
+            r for r in filtered
+            if _has_term(r.memory.title) or _has_term(r.memory.description)
+        ]
+
     return [
         {
             "id": r.memory.id,
@@ -230,7 +249,6 @@ def _add_memory(text: str, fact_type: str | None = None,
         preview.title = title[:100]
     ingestion = _get_ingestion()
     memory = ingestion.confirm(preview)
-    from app.doc_sync import _link_documents
     _link_documents(_get_sqlite(), text, memory.id, preview.supersedes_id)
     return {
         "id": memory.id,
@@ -241,6 +259,43 @@ def _add_memory(text: str, fact_type: str | None = None,
         "description": memory.description[:200],
         "is_active": memory.is_active,
     }
+
+
+CORRECT_PROMPT = """Você é um analista de memória institucional. O usuário quer atualizar uma memória existente com novas informações.
+
+MEMÓRIA ORIGINAL:
+Título: {title}
+Tipo: {fact_type}
+Período: {closing_period}
+Descrição: {description}
+Decidido por: {decided_by}
+Solicitado por: {requested_by}
+Aprovado por: {approved_by}
+
+INSTRUÇÃO DO USUÁRIO:
+{correction_text}
+
+Regras:
+1. Incorpore as novas informações na descrição de forma natural e coesa, reescrevendo o texto completo — NÃO se limite a concatenar.
+2. Ignore meta-instruções do tipo "adicione isso", "inclua aquilo", "atualize para". Extraia apenas o conteúdo factual relevante.
+3. Se a instrução não alterar um campo específico, mantenha o valor original.
+4. Se a instrução mencionar novos responsáveis (decidido/solicitado/aprovado), atualize os campos correspondentes.
+5. Preserve o formato institucional e profissional.
+
+Gere o JSON completo da nova versão:
+{json_schema}"""
+
+CORRECT_JSON_SCHEMA = """{
+  "title": "string",
+  "fact_type": "rule_change | decision | implementation | incident | other",
+  "closing_period": "YYYY-MM",
+  "description": "string",
+  "decided_by": "string | null",
+  "requested_by": "string | null",
+  "approved_by": "string | null",
+  "metadata": "object | null",
+  "confidence_score": 0.0-1.0
+}"""
 
 
 def _infer_memory(text: str) -> dict | None:
@@ -276,14 +331,37 @@ def _correct_memory(text: str, id: str | None = None) -> dict:
         existing = sqlite.get_memory(existing_id)
         if not existing:
             return {"error": "Memória inferida não encontrada."}
+
+    prompt = CORRECT_PROMPT.format(
+        title=existing.title,
+        fact_type=existing.fact_type.value,
+        closing_period=existing.closing_period,
+        description=existing.description,
+        decided_by=existing.decided_by or "",
+        requested_by=existing.requested_by or "",
+        approved_by=existing.approved_by or "",
+        correction_text=text,
+        json_schema=CORRECT_JSON_SCHEMA,
+    )
+
     parser = ParserService(_get_llm())
-    preview = parser.parse(text)
-    if not preview:
-        return {"error": "Não foi possível interpretar o texto fornecido."}
+    try:
+        content = parser.llm.invoke(
+            prompt=prompt,
+            max_tokens=2000,
+            temperature=0.1,
+        )
+        if not content or not content.strip():
+            return {"error": "LLM retornou resposta vazia."}
+        preview = parser._parse_response(content, f"{existing.description}\n{text}")
+    except Exception as e:
+        return {"error": f"Erro ao processar correção: {e}"}
+
     preview.supersedes_id = existing.id
+    preview.is_correction = True
     ingestion = _get_ingestion()
+    ingestion.store_preview(preview)
     memory = ingestion.confirm(preview)
-    from app.doc_sync import _link_documents
     _link_documents(sqlite, text, memory.id, preview.supersedes_id)
     return {
         "id": memory.id,
@@ -303,7 +381,7 @@ def _list_memories(fact_type: str | None = None,
                    tags: str | None = None,
                    limit: int = 20) -> list[dict]:
     sqlite = _get_sqlite()
-    tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()] if tags else None
+    tag_list = clean_tags(tags) if tags else None
     memories = sqlite.search_memories_sql(
         fact_type=fact_type, closing_period=closing_period, tags=tag_list, limit=limit,
     )
@@ -429,7 +507,7 @@ TOOL_DEFINITIONS = {
     "help": {
         "description": "Mostrar a lista de ferramentas disponíveis e como usar o assistente. Use quando o usuário pedir ajuda, help, o que você pode fazer, quais são suas funções.",
         "params": {},
-        "fn": lambda: _format_tool_descriptions(),
+        "fn": lambda: _format_user_help(),
     },
 }
 
@@ -444,6 +522,35 @@ def _format_tool_descriptions() -> str:
         params_str = "\n".join(params_desc) if params_desc else "      (nenhum)"
         lines.append(f"- {name}: {t['description']}\n{params_str}")
     return "\n\n".join(lines)
+
+
+def _format_user_help() -> str:
+    return """**Navi** — Assistente de memória institucional
+
+Você pode conversar em linguagem natural ou usar comandos diretos:
+
+**Comandos disponíveis:**
+• `/add <texto>` — Adicionar nova memória institucional
+• `/correct [id] <texto>` — Corrigir/substituir uma memória existente
+• `/search <termo>` — Buscar memórias por assunto
+• `/list` — Listar memórias registradas
+• `/get <id>` — Ver detalhes completos de uma memória
+• `/count` — Contar memórias
+• `/help` — Mostrar esta ajuda
+• `/sync-docs` — Sincronizar documentos da pasta data/documents/
+
+**Filtros:**
+Adicione `--type <tipo>`, `--period YYYY-MM` ou `--tags <tag1,tag2>` em `/list` e `/search`.
+Tipos: rule_change, decision, implementation, incident, other
+
+**Exemplos:**
+• "adicione uma nova regra de crédito aprovada em junho"
+• "o que mudou no cadastro EP?"
+• "quantas memórias temos?"
+• "/list --period 2026-06"
+• "/search compliance"
+
+**Dica:** Comece digitando `/` para ver os comandos disponíveis."""
 
 
 def _execute_tool(tool: str, params: dict) -> Any:
@@ -472,41 +579,6 @@ def _execute_tool(tool: str, params: dict) -> Any:
         if "validation error" in msg.lower() or "pydantic" in type(e).__module__:
             return {"error": "Erro de validação nos dados extraídos. Verifique se o texto contém informações suficientes (período, tipo, descrição)."}
         return {"error": msg}
-
-
-STOPWORDS = set("""a ante ao aos após até com contra de desde em entre
-para perante por sem sob sobre trás o a os as da das do dos dum duns
-num nums numa um uma umas uns ele ela eles elas me te se nos vos
-lhe lhes eu tu você vocês o a os as meu minha meus minhas teu tua
-teus tuas seu sua seus suas nosso nossa nossos nossas isso isto esse
-essa esses essas este esta estes estas aquele aquela aquelas aquilo
-que qual quem como quanto quanta quantos quantas onde aonde donde
-quando porque porquê pois já também ainda muito pouco mais menos
-demais todo toda todos todas algum alguma alguns algumas nenhum nenhuma
-nenhuns nenhumas certo certa certos certas outro outra outros outras
-vário vária vários várias tanto tanta tantos quantas quanto quanta
-quantos qualquer quaisquer cada qual seja seja se caso sim não nem
-era são fora fosse fosse fossem fosseis fosseis temos têm tem havia
-haja hajam hajas hajamos hajais haja são seja seja sejamos sejais
-sejam seria seriam seria seriam será serão seria seriam era eram é
-são está estão estava estavam esteve estivera estiveram estivera
-esteve estiveram estiverem estejamos estejais esteja estejam esteja
-fui foi fomos foram fora foram fosse fosse fossem fosseis fosseis
-fosse fosse fossem fora foram irei irá irão iria iriam iria iriam
-vá vão vamos vais vai vou vai vai vão vamos""".split())
-
-
-def _remove_accents(text: str) -> str:
-    nfkd = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
-
-
-def _extract_keywords(text: str) -> str:
-    plain = _remove_accents(text)
-    words = plain.lower().split()
-    keywords = [w.strip(""".,;:!?()[]{}"'""") for w in words
-                if len(w) > 2 and w not in STOPWORDS and not w.startswith(("http", "www"))]
-    return " ".join(keywords[:10])
 
 
 def _is_empty_result(result: Any) -> bool:

@@ -1,30 +1,30 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
 
 from app.models import Memory, SearchResult
+from app.services.utils import normalize
+from app.siglas import expand_terms
 from app.storage.sqlite_store import SQLiteStore
 from app.storage.vector_store import VectorStore
 
 
-def _normalize(text: str) -> str:
-    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
-
-
 def _term_bonus(query: str, title: str, description: str, min_len: int = 2) -> float:
-    norm_query = _normalize(query)
-    norm_title = _normalize(title)
-    norm_desc = _normalize(description)
+    norm_query = normalize(query)
+    norm_title = normalize(title)
+    norm_desc = normalize(description)
     text = f"{norm_title} {norm_desc}"
     hits = 0
-    for term in norm_query.split():
+    base_terms = norm_query.split()
+    expanded_terms = expand_terms(base_terms)
+    all_terms = expanded_terms if len(expanded_terms) > len(base_terms) else base_terms
+    for term in all_terms:
         if len(term) < min_len:
             continue
         if term in text:
             hits += 1
-    total = sum(1 for t in norm_query.split() if len(t) >= min_len)
+    total = sum(1 for t in all_terms if len(t) >= min_len)
     return hits / total if total else 0.0
 
 

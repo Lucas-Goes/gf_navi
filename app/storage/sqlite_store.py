@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from app.models import Document, Memory, MemoryDocument
+from app.models import Document, FactType, Memory, MemoryDocument
+from app.services.utils import remove_accents
 
 
 class SQLiteStore:
@@ -17,18 +17,13 @@ class SQLiteStore:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn: sqlite3.Connection | None = None
 
-    @staticmethod
-    def _noaccent(text: str) -> str:
-        nfkd = unicodedata.normalize("NFKD", text)
-        return "".join(c for c in nfkd if not unicodedata.combining(c))
-
     def connect(self):
         if self.conn is None:
             self.conn = sqlite3.connect(self.db_path)
             self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
-            self.conn.create_function("noaccent", 1, self._noaccent)
+            self.conn.create_function("noaccent", 1, remove_accents)
         return self.conn
 
     def close(self):
@@ -40,10 +35,11 @@ class SQLiteStore:
         conn = self.connect()
         cursor = conn.cursor()
 
-        cursor.executescript("""
+        fact_types = ", ".join(f"'{e.value}'" for e in FactType)
+        cursor.executescript(f"""
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
-                fact_type TEXT NOT NULL CHECK(fact_type IN ('rule_change','decision','implementation','incident','other')),
+                fact_type TEXT NOT NULL CHECK(fact_type IN ({fact_types})),
                 closing_period TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
