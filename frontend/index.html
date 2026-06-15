@@ -192,15 +192,16 @@ Oi! Sou a <span class="text-fairy">Navi</span>!
 
 <!-- Input Area -->
 <div class="fixed bottom-0 left-0 right-0 p-4 md:p-6 pointer-events-none z-50" id="chat-input-area" style="display: none;">
-<div class="max-w-3xl mx-auto pointer-events-auto">
+<div class="max-w-3xl mx-auto pointer-events-auto" style="position: relative;">
 <div class="floating-input rounded-4xl p-2 flex items-center gap-2 group focus-within:ring-1 focus-within:ring-fairy/20 transition-all">
-  <textarea class="w-full bg-transparent border-none focus:ring-0 text-warm-text placeholder:text-warm-muted/40 resize-none font-body py-4 text-lg px-4 rounded-3xl" id="chat-input" placeholder="Digite sua mensagem..." rows="1"></textarea>
+  <textarea class="w-full bg-transparent border-none focus:ring-0 text-warm-text placeholder:text-warm-muted/40 resize-none font-body py-4 text-lg px-4 rounded-3xl" id="chat-input" placeholder="Digite sua mensagem..." rows="1" autocomplete="off"></textarea>
   <div class="flex items-center pr-2 flex-shrink-0">
     <button type="button" class="w-12 h-12 rounded-full bg-fairy/20 hover:bg-fairy/30 text-fairy flex items-center justify-center transition-all hover:scale-105 active:scale-95" id="send-button" style="box-shadow: 0 0 20px rgba(var(--fairy), 0.2);">
       <span class="material-symbols-outlined" style="padding-left: 4px;">send</span>
     </button>
   </div>
 </div>
+<div class="slash-menu" id="slash-menu"></div>
 </div>
 </div>
 

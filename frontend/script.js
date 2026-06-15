@@ -253,18 +253,6 @@ if (!chatInput || !sendBtn || !messagesContainer || !chatInputArea || !setupView
 console.error('Chat UI elements missing — check HTML IDs');
 }
 
-chatInput.addEventListener('input', function() {
-this.style.height = 'auto';
-this.style.height = (this.scrollHeight) + 'px';
-});
-
-chatInput.addEventListener('keydown', (e) => {
-if (e.key === 'Enter' && !e.shiftKey) {
-e.preventDefault();
-sendBtn.click();
-}
-});
-
 async function sendMessage() {
 if (chatInput.value.trim() === '') return;
 
@@ -410,3 +398,102 @@ function highlightCode() {
 }
 
 sendBtn.addEventListener('click', sendMessage);
+
+// --- Slash command autocomplete ---
+const SLASH_COMMANDS = [
+  { cmd: '/add', desc: 'Adicionar nova memória', usage: '/add <texto>' },
+  { cmd: '/correct', desc: 'Corrigir memória existente', usage: '/correct [id] <texto>' },
+  { cmd: '/search', desc: 'Buscar memórias', usage: '/search <termo>' },
+  { cmd: '/list', desc: 'Listar memórias', usage: '/list [--type] [--period] [--tags]' },
+  { cmd: '/get', desc: 'Detalhes de uma memória', usage: '/get <id>' },
+  { cmd: '/count', desc: 'Contar memórias', usage: '/count [--type]' },
+  { cmd: '/help', desc: 'Mostrar comandos disponíveis', usage: '/help' },
+  { cmd: '/sync-docs', desc: 'Sincronizar documentos', usage: '/sync-docs' },
+];
+
+const slashMenu = document.getElementById('slash-menu');
+let selectedSlashIndex = -1;
+
+function renderSlashMenu(filter) {
+  if (!slashMenu) return;
+  if (!chatInput.value.startsWith('/')) {
+    slashMenu.classList.remove('active');
+    return;
+  }
+  const parts = chatInput.value.split(' ');
+  const prefix = parts[0].toLowerCase();
+  const filtered = SLASH_COMMANDS.filter(c => c.cmd.startsWith(prefix));
+  if (filtered.length === 0) {
+    slashMenu.classList.remove('active');
+    return;
+  }
+  slashMenu.innerHTML = filtered.map((c, i) =>
+    `<div class="slash-item${i === selectedSlashIndex ? ' selected' : ''}" data-index="${i}">
+       <span class="cmd">${c.cmd}</span>
+       <span class="desc">${c.desc}</span>
+     </div>`
+  ).join('');
+  slashMenu.classList.add('active');
+  if (selectedSlashIndex < 0) selectedSlashIndex = 0;
+  if (selectedSlashIndex >= filtered.length) selectedSlashIndex = filtered.length - 1;
+  const selected = slashMenu.querySelector('.selected');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
+}
+
+function applySlashCommand(index) {
+  if (!slashMenu.classList.contains('active')) return;
+  const items = slashMenu.querySelectorAll('.slash-item');
+  if (index < 0 || index >= items.length) return;
+  const cmd = items[index].querySelector('.cmd').textContent;
+  chatInput.value = cmd + ' ';
+  chatInput.focus();
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+  chatInput.style.height = 'auto';
+  slashMenu.classList.remove('active');
+}
+
+chatInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = (this.scrollHeight) + 'px';
+  selectedSlashIndex = -1;
+  renderSlashMenu();
+});
+
+chatInput.addEventListener('keydown', (e) => {
+  if (!slashMenu.classList.contains('active')) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendBtn.click();
+    }
+    return;
+  }
+  const items = slashMenu.querySelectorAll('.slash-item');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    selectedSlashIndex = Math.min(selectedSlashIndex + 1, items.length - 1);
+    renderSlashMenu();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    selectedSlashIndex = Math.max(selectedSlashIndex - 1, 0);
+    renderSlashMenu();
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    applySlashCommand(selectedSlashIndex >= 0 ? selectedSlashIndex : 0);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    slashMenu.classList.remove('active');
+  }
+});
+
+slashMenu.addEventListener('mousedown', (e) => {
+  const item = e.target.closest('.slash-item');
+  if (!item) return;
+  e.preventDefault();
+  applySlashCommand(parseInt(item.dataset.index));
+});
+
+document.addEventListener('click', (e) => {
+  if (slashMenu && !slashMenu.contains(e.target) && e.target !== chatInput) {
+    slashMenu.classList.remove('active');
+  }
+});
