@@ -253,11 +253,52 @@ if (!chatInput || !sendBtn || !messagesContainer || !chatInputArea || !setupView
 console.error('Chat UI elements missing — check HTML IDs');
 }
 
-async function sendMessage() {
-if (chatInput.value.trim() === '') return;
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
 
-const msg = chatInput.value;
-const msgHtml = `
+function highlightSlashCommand(text) {
+  if (text.startsWith('/')) {
+    const spaceIndex = text.indexOf(' ');
+    if (spaceIndex > 0) {
+      const cmd = text.substring(0, spaceIndex);
+      const args = text.substring(spaceIndex);
+      return `<span class="text-fairy font-semibold">${escapeHtml(cmd)}</span>${escapeHtml(args)}`;
+    }
+    return `<span class="text-fairy font-semibold">${escapeHtml(text)}</span>`;
+  }
+  return escapeHtml(text);
+}
+
+function setupCopyButton(bubbleEl) {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn material-symbols-outlined';
+  btn.textContent = 'content_copy';
+  btn.setAttribute('aria-label', 'Copiar mensagem');
+  btn.addEventListener('click', function () {
+    const clone = bubbleEl.cloneNode(true);
+    const copyBtn = clone.querySelector('.copy-btn');
+    if (copyBtn) copyBtn.remove();
+    const text = clone.textContent.trim();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'check';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'content_copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    }).catch(() => {});
+  });
+  bubbleEl.appendChild(btn);
+}
+
+async function sendMessage() {
+  if (chatInput.value.trim() === '') return;
+
+  const msg = chatInput.value;
+  const msgHtml = `
 <div class="flex flex-col gap-2 max-w-[80%] mb-8 bubble-enter" style="margin-left: auto;">
   <div class="flex items-center gap-3 justify-end mr-1">
     <span class="text-[11px] tracking-widest text-warm-muted/60 uppercase" style="font-family: 'Space Grotesk', sans-serif;">Você <span class="opacity-40 ml-2 font-body italic lowercase">${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, '0')}</span></span>
@@ -265,13 +306,15 @@ const msgHtml = `
       <span class="material-symbols-outlined text-xs text-warm-text/60">person</span>
     </div>
   </div>
-  <div class="glass-bubble-user p-6 rounded-3xl rounded-tr-none relative text-right" style="overflow-wrap: break-word; word-break: break-word;">
-    <p class="text-warm-text/90 leading-relaxed text-lg">${msg}</p>
+  <div class="glass-bubble-user p-6 rounded-3xl rounded-tr-none relative" style="overflow-wrap: break-word; word-break: break-word;">
+    <p class="text-warm-text/90 leading-relaxed text-lg">${highlightSlashCommand(msg)}</p>
   </div>
 </div>
 `;
 
 messagesContainer.insertAdjacentHTML('beforeend', msgHtml);
+const userBubble = messagesContainer.lastElementChild?.querySelector('.glass-bubble-user');
+if (userBubble) setupCopyButton(userBubble);
 chatInput.value = '';
 chatInput.style.height = 'auto';
 messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -296,7 +339,9 @@ messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
 const naviContent = messagesContainer.lastElementChild?.querySelector('.navi-content');
 if (!naviContent) return;
-naviContent.innerHTML = '<p class="text-warm-text/70 italic">Processando...</p>';
+const naviBubble = naviContent.closest('.glass-bubble-ai');
+if (naviBubble) setupCopyButton(naviBubble);
+naviContent.innerHTML = '<div class="thinking-indicator"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-label">Processando</span></div>';
 
 const xhr = new XMLHttpRequest();
 xhr.open('POST', '/api/chat', true);
@@ -422,6 +467,10 @@ function renderSlashMenu(filter) {
   }
   const parts = chatInput.value.split(' ');
   const prefix = parts[0].toLowerCase();
+  if (parts.length > 1) {
+    slashMenu.classList.remove('active');
+    return;
+  }
   const filtered = SLASH_COMMANDS.filter(c => c.cmd.startsWith(prefix));
   if (filtered.length === 0) {
     slashMenu.classList.remove('active');

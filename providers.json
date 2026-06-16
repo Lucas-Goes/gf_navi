@@ -1,9 +1,9 @@
 {
   "nvidia": {
     "llm_provider": "openai",
-    "llm_model_id": "meta/llama-3.2-3b-instruct",
+    "llm_model_id": "openai/gpt-oss-120b",
     "llm_endpoint_url": "https://integrate.api.nvidia.com/v1",
-    "llm_api_key": "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"
+    "llm_api_key": "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"
   },
   "bedrock": {
     "llm_provider": "bedrock",

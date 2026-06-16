@@ -1,3 +1,16 @@
+"""
+Provedores de LLM (Large Language Model).
+
+Hierarquia:
+  LLMProvider (ABC)
+    ├── BedrockProvider   → AWS Bedrock (Converse API)
+    └── OpenAICompatibleProvider → qualquer API compatível com OpenAI (NVIDIA, Ollama, vLLM, etc.)
+
+Uso:
+  provider = create_provider(config)
+  resposta = provider.invoke(prompt="...", system_prompt="...", max_tokens=2000)
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -7,6 +20,7 @@ import requests
 
 
 class LLMProvider(ABC):
+    """Classe base abstrata para todos os provedores de LLM."""
     @abstractmethod
     def invoke(self, prompt: str, system_prompt: str = "",
                max_tokens: int = 2000, temperature: float = 0.1) -> str:
@@ -75,7 +89,7 @@ class OpenAICompatibleProvider(LLMProvider):
             f"{self.endpoint_url}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=(10, 30),
+            timeout=(15, 90),
         )
         resp.raise_for_status()
         data = resp.json()

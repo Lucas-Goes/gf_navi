@@ -1,10 +1,26 @@
+"""
+Agente ReAct (Reasoning + Acting) — encadeia múltiplas chamadas de ferramentas.
+
+Fluxo:
+  1. Se first_tool foi fornecido (pelo classificador), executa como primeiro passo
+  2. Entra no loop ReAct:
+     a. Mostra histórico dos passos já executados
+     b. Pergunta ao LLM qual o próximo passo (ou se já pode responder)
+     c. LLM responde com JSON: {tool, params} ou {answer, done}
+     d. Se for tool, executa e adiciona ao histórico
+     e. Se for done, sintetiza resposta
+  3. Se o LLM falhar (timeout/erro), usa os resultados que já tem
+
+Usado em: ask_agent.py (ferramentas que podem exigir encadeamento).
+"""
+
 from __future__ import annotations
 
 import json
 from typing import Any, Generator
 
 from app.services.tools import (
-    TOOL_DEFINITIONS, _execute_tool, _format_tool_descriptions,
+    TOOL_DEFINITIONS, TOOL_LABELS, _execute_tool, _format_tool_descriptions,
     _is_empty_result,
 )
 from app.services.utils import extract_keywords
@@ -17,8 +33,8 @@ REACT_SYSTEM_PROMPT = """Você é Navi, um agente que responde perguntas sobre m
 Você tem acesso a ferramentas. Decida qual o PRÓXIMO passo para responder.
 
 Já foram executados alguns passos. Analise os resultados e decida:
-- Se já tem dados suficientes para responder → {"answer": "resposta...", "done": true}
-- Se precisa de outra ferramenta → {"thought": "preciso de...", "tool": "nome", "params": {...}}
+- Se já tem dados suficientes para responder → {{"answer": "resposta...", "done": true}}
+- Se precisa de outra ferramenta → {{"thought": "preciso de...", "tool": "nome", "params": {{...}}}}
 
 Exemplos de encadeamento:
 - "mostre detalhes da memória sobre cadastro EP"
@@ -38,6 +54,10 @@ Retorne APENAS JSON, sem texto adicional."""
 
 
 def _summarize(tool: str, result: Any) -> str:
+    """
+    Resume o resultado de uma ferramenta para exibir no histórico do ReAct.
+    Usado em: _build_history_text().
+    """
     if isinstance(result, list):
         if not result:
             return "Nenhum resultado encontrado."
@@ -57,6 +77,10 @@ def _summarize(tool: str, result: Any) -> str:
 
 
 def _build_history_text(history: list[dict]) -> str:
+    """
+    Constrói o texto do histórico formatado para o prompt do ReAct.
+    Usado em: ReActAgent.run().
+    """
     if not history:
         return "(nenhum passo executado ainda)"
     lines = []
@@ -67,6 +91,11 @@ def _build_history_text(history: list[dict]) -> str:
 
 
 def _check_repeated(history: list[dict]) -> bool:
+    """
+    Detecta se o último passo é uma repetição de um passo anterior
+    (mesma ferramenta + mesmos parâmetros).
+    Usado em: ReActAgent.run().
+    """
     if len(history) < 2:
         return False
     last = history[-1]
@@ -77,6 +106,20 @@ def _check_repeated(history: list[dict]) -> bool:
 
 
 class ReActAgent:
+    """
+    Agente ReAct que encadeia chamadas de ferramentas.
+
+    Attributes:
+      question:   Pergunta original do usuário.
+      history:    Lista de {tool, params, result} dos passos executados.
+      first_tool: Se definido pelo classificador, executa antes do loop.
+
+    Uso:
+      agent = ReActAgent("quantas memórias?")
+      for chunk in agent.run():
+          print(chunk, end="")
+    """
+
     def __init__(self, question: str, first_tool: str | None = None, first_params: dict | None = None):
         self.question = question
         self.history: list[dict] = []
@@ -84,14 +127,26 @@ class ReActAgent:
         self.first_params = first_params or {}
 
     def run(self) -> Generator[str, None, None]:
+        """
+        Executa o loop ReAct.
+
+        Fluxo:
+          1. Se first_tool foi fornecido, executa como primeiro passo
+          2. Entra no loop de até MAX_STEPS iterações
+          3. A cada iteração pergunta ao LLM qual o próximo passo
+          4. Quando LLM responder {done: true} ou atingir limite, sintetiza resposta
+
+        Se o LLM falhar (timeout/erro), usa os resultados já obtidos.
+        """
         yield "⚙️ Processando...\n"
 
         step = 0
         tool_descriptions = _format_tool_descriptions()
 
+        # Passo inicial fornecido pelo classificador
         if self.first_tool:
             step += 1
-            yield f"  ⚙️ Passo {step}: {self.first_tool}...\n"
+            yield f"  ⚙️ {TOOL_LABELS.get(self.first_tool, self.first_tool)}...\n"
             result = _execute_tool(self.first_tool, self.first_params)
             if isinstance(result, dict) and "error" in result:
                 yield f"  ❌ {result['error']}\n"
@@ -103,7 +158,7 @@ class ReActAgent:
             })
             if _is_empty_result(result):
                 new_query = extract_keywords(self.question) or self.question
-                yield f"  ⚙️ Passo {step} sem resultados. Refinando busca...\n"
+                yield f"  ⚙️ Busca sem resultados. Refinando com termos alternativos...\n"
                 result2 = _execute_tool("search_memories", {"query": new_query})
                 if not (isinstance(result2, dict) and "error" in result2):
                     self.history.append({
@@ -112,11 +167,7 @@ class ReActAgent:
                         "result": result2,
                     })
 
-            if self._has_result():
-                yield "✅\n\n"
-                yield from synthesize_answer_stream(self.question, self._get_last_result(), self._get_last_tool())
-                return
-
+        # Loop ReAct principal
         while step < MAX_STEPS:
             step += 1
             history_text = _build_history_text(self.history)
@@ -164,7 +215,7 @@ class ReActAgent:
                 yield "❌ Ferramenta desconhecida.\n"
                 return
 
-            yield f"  ⚙️ Passo {step}: {tool}...\n"
+            yield f"  ⚙️ {TOOL_LABELS.get(tool, tool)}...\n"
             result = _execute_tool(tool, params)
 
             if isinstance(result, dict) and "error" in result:
@@ -183,27 +234,36 @@ class ReActAgent:
                 yield "  ⚠️ Detectei repetição. Finalizando com dados disponíveis.\n"
                 break
 
+        # Finalização: sintetiza com todos os resultados disponíveis
         if self._has_result():
             yield "✅\n\n"
-            yield from synthesize_answer_stream(
-                self.question, self._get_last_result(), self._get_last_tool()
-            )
+            if len(self.history) > 1:
+                for h in self.history:
+                    if not _is_empty_result(h["result"]):
+                        yield from synthesize_answer_stream(self.question, h["result"], h["tool"])
+            else:
+                yield from synthesize_answer_stream(
+                    self.question, self._get_last_result(), self._get_last_tool()
+                )
         else:
             yield "❌ Não foi possível processar sua pergunta.\n"
 
     def _has_result(self) -> bool:
+        """True se pelo menos um passo no histórico tem resultado não-vazio."""
         return any(
             not _is_empty_result(h["result"])
             for h in self.history
         )
 
     def _get_last_result(self) -> Any:
+        """Retorna o resultado do último passo não-vazio no histórico."""
         for h in reversed(self.history):
             if not _is_empty_result(h["result"]):
                 return h["result"]
         return None
 
     def _get_last_tool(self) -> str:
+        """Retorna o nome da ferramenta do último passo não-vazio."""
         for h in reversed(self.history):
             if not _is_empty_result(h["result"]):
                 return h["tool"]

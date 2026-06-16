@@ -1,23 +1,31 @@
-"""Tool registry — TOOL_DEFINITIONS + _execute_tool + helpers.
+"""
+Tool registry — TOOL_DEFINITIONS, TOOL_LABELS, _execute_tool, helpers e preview.
 
-Separado de ask_agent.py para evitar circular import com agent.py.
+Contém a definição de todas as ferramentas que o ReActAgent e o AskAgent
+podem executar. Centraliza também o vocabulário amigável (TOOL_LABELS)
+para exibição ao usuário e o registro de previews (add/correct antes de
+confirmar no banco).
+
+Usado em: agent.py, ask_agent.py, synthesis.py.
 """
 
 from __future__ import annotations
 
+import io
 import json
-import re
+import uuid
+from contextlib import redirect_stdout
 from typing import Any
 
 import requests
 
 from app.config import settings
-from app.models import FactType
+from app.models import FactType, Preview
 from app.services.ingestion import IngestionService
 from app.services.llm import create_provider
 from app.services.parser import ParserService
 from app.services.search import SearchService
-from app.services.utils import clean_tags, remove_accents, extract_keywords
+from app.services.utils import clean_tags, remove_accents, extract_keywords, smart_truncate
 from app.siglas import expand_query as expand_siglas_query
 from app.doc_sync import _link_documents
 from app.storage.sqlite_store import SQLiteStore
@@ -29,8 +37,12 @@ _LLM = None
 _INGESTION: IngestionService | None = None
 _SEARCH: SearchService | None = None
 
+# Preview registry — dicionário em memória {preview_id: {"kind", "text", "preview"}}
+_PREVIEWS: dict[str, dict] = {}
 
-def _get_sqlite():
+
+def _get_sqlite() -> SQLiteStore:
+    """Singleton da store SQLite."""
     global _SQLITE
     if _SQLITE is None:
         _SQLITE = SQLiteStore(settings.sqlite_path)
@@ -38,7 +50,8 @@ def _get_sqlite():
     return _SQLITE
 
 
-def _get_vector():
+def _get_vector() -> VectorStore:
+    """Singleton da store vetorial Chroma."""
     global _VECTOR
     if _VECTOR is None:
         _VECTOR = VectorStore(settings.chroma_path, settings.embedding_model)
@@ -46,29 +59,129 @@ def _get_vector():
 
 
 def _get_llm():
+    """Singleton do provider LLM."""
     global _LLM
     if _LLM is None:
         _LLM = create_provider(settings)
     return _LLM
 
 
-def _get_ingestion():
+def _get_ingestion() -> IngestionService:
+    """Singleton do serviço de ingestão (SQLite + Chroma)."""
     global _INGESTION
     if _INGESTION is None:
         _INGESTION = IngestionService(_get_sqlite(), _get_vector())
     return _INGESTION
 
 
-def _get_search():
+def _get_search() -> SearchService:
+    """Singleton do serviço de busca híbrida."""
     global _SEARCH
     if _SEARCH is None:
         _SEARCH = SearchService(_get_sqlite(), _get_vector())
     return _SEARCH
 
 
+# ── Preview helpers (usados pelo fluxo /add e /correct) ──
+
+
+def _store_preview(kind: str, text: str, preview: Preview) -> str:
+    """
+    Armazena um Preview em memória e retorna um ID curto.
+
+    Args:
+        kind: "add" ou "correct".
+        text: Texto original fornecido pelo usuário.
+        preview: Preview gerado pelo parser.
+
+    Retorna: preview_id (8 caracteres).
+
+    Usado em: AskAgent._preview_add(), AskAgent._preview_correct().
+    """
+    preview_id = str(uuid.uuid4())[:8]
+    _PREVIEWS[preview_id] = {"kind": kind, "text": text, "preview": preview}
+    return preview_id
+
+
+def _confirm_preview(preview_id: str) -> dict:
+    """
+    Confirma um preview pendente: persiste no banco (SQLite + Chroma).
+
+    O preview é removido do registro após a confirmação.
+
+    Args:
+        preview_id: ID do preview a confirmar.
+
+    Retorna: dict com id, title, etc. da memória criada.
+    Retorna {"error": ...} se o preview não existir.
+
+    Usado em: AskAgent.ask() (/confirm).
+    """
+    entry = _PREVIEWS.pop(preview_id, None)
+    if not entry:
+        return {"error": f"Preview '{preview_id}' não encontrado ou já expirou."}
+    ingestion = _get_ingestion()
+    memory = ingestion.confirm(entry["preview"])
+    _link_documents(_get_sqlite(), entry["text"], memory.id, entry["preview"].supersedes_id)
+    return {
+        "id": memory.id,
+        "title": memory.title,
+        "fact_type": memory.fact_type.value,
+        "closing_period": memory.closing_period,
+        "tags": memory.tags,
+        "description": memory.description[:200],
+        "is_active": memory.is_active,
+    }
+
+
+def _cancel_preview(preview_id: str) -> dict:
+    """
+    Cancela um preview pendente (remove do registro sem persistir).
+
+    Args:
+        preview_id: ID do preview a cancelar.
+
+    Retorna: {"title": "..."} com o título do preview cancelado.
+    Retorna {"error": ...} se o preview não existir.
+
+    Usado em: AskAgent.ask() (/cancel).
+    """
+    entry = _PREVIEWS.pop(preview_id, None)
+    if not entry:
+        return {"error": f"Preview '{preview_id}' não encontrado."}
+    return {"title": entry["preview"].title}
+
+
+# ── Rótulos amigáveis para exibição ──
+
+TOOL_LABELS: dict[str, str] = {
+    "add_memory": "Adicionar memória",
+    "correct_memory": "Corrigir memória",
+    "search_memories": "Buscar memórias",
+    "list_memories": "Listar memórias",
+    "get_memory_detail": "Detalhes da memória",
+    "count_memories": "Contar memórias",
+    "list_periods": "Listar períodos",
+    "list_fact_types": "Listar tipos",
+    "search_documents": "Buscar documentos",
+    "sync_documents": "Sincronizar documentos",
+    "help": "Ajuda",
+    "confirm_preview": "Confirmar operação",
+    "cancel_preview": "Cancelar operação",
+}
+
+
+# ── Ferramentas internas ──
+
+
 def _count_memories(active: bool | None = None, fact_type: str | None = None,
-                     closing_period: str | None = None,
-                     tags: str | None = None) -> dict:
+                    closing_period: str | None = None,
+                    tags: str | None = None) -> dict:
+    """
+    Conta memórias com filtros opcionais.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     sqlite = _get_sqlite()
     conditions = []
     params = []
@@ -111,6 +224,11 @@ def _count_memories(active: bool | None = None, fact_type: str | None = None,
 
 
 def _build_chain(sqlite: SQLiteStore, memory_id: str, max_depth: int = 20) -> list[dict]:
+    """
+    Constrói a cadeia de correções retrocedendo por supersedes_id.
+
+    Usado em: _search_memories (enriquecimento dos resultados).
+    """
     chain = []
     current_id = memory_id
     depth = 0
@@ -136,8 +254,16 @@ def _build_chain(sqlite: SQLiteStore, memory_id: str, max_depth: int = 20) -> li
 
 
 def _search_memories(query: str, top_k: int = 3, fact_type: str | None = None,
-                      closing_period: str | None = None,
-                      tags: str | None = None) -> list[dict]:
+                     closing_period: str | None = None,
+                     tags: str | None = None) -> list[dict]:
+    """
+    Busca memórias por texto com busca semântica (embedding + SQL).
+
+    Expande siglas, filtra por tipo/período/tags, remove duplicadas por
+    supersedes_id e aplica filtro de termos relevantes pós-busca.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     search = _get_search()
     sqlite = _get_sqlite()
     tag_filter = clean_tags(tags) if tags else None
@@ -154,6 +280,8 @@ def _search_memories(query: str, top_k: int = 3, fact_type: str | None = None,
     if long_terms:
         from app.siglas import expand_terms as expand_siglas_terms
         all_terms = expand_siglas_terms(long_terms)
+
+        import re
         def _has_term(text: str) -> bool:
             normalized = remove_accents(text.lower())
             words = re.sub(r"[^a-z0-9]", " ", normalized).split()
@@ -190,6 +318,11 @@ def _search_memories(query: str, top_k: int = 3, fact_type: str | None = None,
 
 
 def _get_memory_detail(id: str) -> dict | None:
+    """
+    Obtém detalhes completos de uma memória pelo ID.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     sqlite = _get_sqlite()
     m = sqlite.get_memory(id)
     if not m:
@@ -214,6 +347,11 @@ def _get_memory_detail(id: str) -> dict | None:
 
 
 def _list_periods() -> list[dict]:
+    """
+    Lista todos os períodos de fechamento com contagem de memórias.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     sqlite = _get_sqlite()
     conn = sqlite.connect()
     rows = conn.execute(
@@ -223,6 +361,11 @@ def _list_periods() -> list[dict]:
 
 
 def _list_fact_types() -> list[dict]:
+    """
+    Lista todos os tipos de memória com contagem.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     sqlite = _get_sqlite()
     conn = sqlite.connect()
     rows = conn.execute(
@@ -234,6 +377,12 @@ def _list_fact_types() -> list[dict]:
 def _add_memory(text: str, fact_type: str | None = None,
                 closing_period: str | None = None,
                 title: str | None = None) -> dict:
+    """
+    Adiciona uma nova memória institucional (confirma direto, sem preview).
+
+    Usado em: TOOL_DEFINITIONS (fluxo direto, sem preview).
+    Fluxo alternativo com preview: AskAgent._preview_add() + _confirm_preview().
+    """
     parser = ParserService(_get_llm())
     preview = parser.parse(text)
     if not preview:
@@ -285,7 +434,7 @@ Regras:
 Gere o JSON completo da nova versão:
 {json_schema}"""
 
-CORRECT_JSON_SCHEMA = """{
+CORRECT_JSON_SCHEMA = """{{
   "title": "string",
   "fact_type": "rule_change | decision | implementation | incident | other",
   "closing_period": "YYYY-MM",
@@ -295,10 +444,17 @@ CORRECT_JSON_SCHEMA = """{
   "approved_by": "string | null",
   "metadata": "object | null",
   "confidence_score": 0.0-1.0
-}"""
+}}"""
 
 
 def _infer_memory(text: str) -> dict | None:
+    """
+    Tenta inferir qual memória existente está sendo referida no texto.
+
+    Usa busca semântica e retorna o detalhe da memória ativa mais relevante.
+
+    Usado em: _correct_memory(), AskAgent._preview_correct().
+    """
     search = _get_search()
     sqlite = _get_sqlite()
     results = search.hybrid_search(text, top_k=5)
@@ -318,6 +474,14 @@ def _infer_memory(text: str) -> dict | None:
 
 
 def _correct_memory(text: str, id: str | None = None) -> dict:
+    """
+    Corrige/substitui uma memória existente (confirma direto, sem preview).
+
+    Se id for omitido, tenta inferir a memória a partir do texto.
+
+    Usado em: TOOL_DEFINITIONS (fluxo direto, sem preview).
+    Fluxo alternativo com preview: AskAgent._preview_correct() + _confirm_preview().
+    """
     sqlite = _get_sqlite()
     if id:
         existing = sqlite.get_memory(id)
@@ -380,6 +544,11 @@ def _list_memories(fact_type: str | None = None,
                    active: bool | None = None,
                    tags: str | None = None,
                    limit: int = 20) -> list[dict]:
+    """
+    Lista memórias com filtros opcionais.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     sqlite = _get_sqlite()
     tag_list = clean_tags(tags) if tags else None
     memories = sqlite.search_memories_sql(
@@ -405,6 +574,11 @@ def _list_memories(fact_type: str | None = None,
 
 
 def _search_documents(query: str, top_k: int = 5) -> list[dict]:
+    """
+    Busca documentos anexados às memórias.
+
+    Usado em: TOOL_DEFINITIONS → ReActAgent / AskAgent.
+    """
     sqlite = _get_sqlite()
     docs = sqlite.search_documents(text_query=query, limit=top_k)
     return [
@@ -414,9 +588,12 @@ def _search_documents(query: str, top_k: int = 5) -> list[dict]:
 
 
 def _sync_documents() -> dict:
+    """
+    Sincroniza documentos da pasta data/documents/ com o banco.
+
+    Usado em: TOOL_DEFINITIONS → AskAgent (comando /sync-docs).
+    """
     from app.doc_sync import cmd_sync_docs
-    import io
-    from contextlib import redirect_stdout
     buf = io.StringIO()
     with redirect_stdout(buf):
         cmd_sync_docs(_get_sqlite(), _get_vector())
@@ -513,6 +690,11 @@ TOOL_DEFINITIONS = {
 
 
 def _format_tool_descriptions() -> str:
+    """
+    Formata o bloco de descrições das ferramentas para o prompt do ReAct.
+
+    Usado em: ReActAgent.run() (preenche {tool_descriptions} no prompt).
+    """
     lines = []
     for name, t in TOOL_DEFINITIONS.items():
         params_desc = []
@@ -525,6 +707,11 @@ def _format_tool_descriptions() -> str:
 
 
 def _format_user_help() -> str:
+    """
+    Mensagem de ajuda exibida ao usuário.
+
+    Usado em: TOOL_DEFINITIONS["help"] → AskAgent / CLI.
+    """
     return """**Navi** — Assistente de memória institucional
 
 Você pode conversar em linguagem natural ou usar comandos diretos:
@@ -554,6 +741,19 @@ Tipos: rule_change, decision, implementation, incident, other
 
 
 def _execute_tool(tool: str, params: dict) -> Any:
+    """
+    Executa uma ferramenta por nome com os parâmetros fornecidos.
+
+    Valida parâmetros obrigatórios, converte tipos e captura exceções.
+
+    Args:
+        tool: Nome da ferramenta (deve estar em TOOL_DEFINITIONS).
+        params: Dict com parâmetros.
+
+    Retorna: Resultado da ferramenta ou {"error": ...} em caso de falha.
+
+    Usado em: ReActAgent.run(), AskAgent.ask().
+    """
     t = TOOL_DEFINITIONS.get(tool)
     if not t:
         return {"error": f"Ferramenta '{tool}' não encontrada."}
@@ -582,6 +782,12 @@ def _execute_tool(tool: str, params: dict) -> Any:
 
 
 def _is_empty_result(result: Any) -> bool:
+    """
+    Verifica se um resultado de ferramenta está vazio (None, lista vazia,
+    total=0, ou contém erro).
+
+    Usado em: ReActAgent (para decidir se pode prosseguir ou precisa refinar).
+    """
     if result is None:
         return True
     if isinstance(result, list) and len(result) == 0:
