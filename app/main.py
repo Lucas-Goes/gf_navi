@@ -9,12 +9,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.api.routes import router as chat_router
+from app.services.logger import logger
+
+origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+logger.info("CORS allow_origins: %s", origins)
 
 app = FastAPI(title="Navi — Cérebro Institucional")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins if origins != ["*"] else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,11 +32,15 @@ if frontend_path.exists():
 
 
 def main():
+    logger.info(
+        "Starting Navi on %s:%s (reload=%s)",
+        settings.app_host, settings.app_port, settings.app_reload,
+    )
     uvicorn.run(
         "app.main:app",
         host=settings.app_host,
         port=settings.app_port,
-        reload=True,
+        reload=settings.app_reload,
     )
 
 

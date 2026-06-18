@@ -21,36 +21,7 @@ from typing import Optional
 from app.models import FactType, Preview
 from app.services.utils import clean_tag_list
 from app.siglas import expand_tags
-
-PARSER_SYSTEM_PROMPT = """Você é um analista de memória institucional especializado em extrair informações estruturadas de textos sobre decisões, regras, implementações e incidentes do fechamento mensal de um banco.
-
-Extraia os campos conforme o schema JSON abaixo:
-
-{{
-  "title": "string (obrigatório, título curto de até 40 caracteres, sem aspas ou meta-instruções)",
-  "fact_type": "enum: rule_change | decision | implementation | incident | other",
-  "closing_period": "string (obrigatório, formato YYYY-MM do período de fechamento)",
-  "description": "string (obrigatório, 1 a 3 parágrafos detalhando o fato, SEM meta-instruções como 'adicione isso')",
-  "tags": "array de strings (obrigatório, lista de 1 a 5 palavras-chave que categorizam a memória, máximo 5 tags, cada tag no máximo 20 caracteres)",
-  "decided_by": "string | null",
-  "requested_by": "string | null",
-  "approved_by": "string | null",
-  "metadata": "object | null",
-  "supersedes_id": "string | null (UUID da memória que esta corrige, se for o caso)",
-  "is_correction": "boolean",
-  "confidence_score": "number (0.0 a 1.0, use 0.0 se os dados extraídos forem insuficientes ou inconsistentes)"
-}}
-
-Regras:
-- fact_type deve ser um dos valores enumerados
-- closing_period é obrigatório no formato YYYY-MM
-- title: MÁXIMO 40 caracteres. NÃO inclua meta-instruções como "Atualização de" ou "Correção de" — extraia apenas o título factual
-- description: Extraia APENAS o conteúdo factual. Ignore instruções do tipo "adicione", "inclua", "atualize"
-- Se a confiança na extração for baixa (dados ambíguos, inconsistentes ou insuficientes), defina confidence_score como 0.0
-- Se o texto mencionar correção de algo anterior, marque is_correction=true
-- Se houver menção explícita a um ID de memória sendo corrigido, preencha supersedes_id
-- tags: OBRIGATÓRIO. Extraia de 2 a 5 palavras-chave que representem os assuntos principais (ex: compliance, crédito, sistema, processo, relatório). Use apenas o radical da palavra. Cada tag deve ter no máximo 20 caracteres. NUNCA deixe vazio.
-- Retorne APENAS o JSON, sem texto adicional."""
+from app.prompts import load_prompt
 
 
 class ParserService:
@@ -79,7 +50,7 @@ class ParserService:
 
         Usado em: tools._add_memory(), ask_agent._preview_add(), etc.
         """
-        prompt = f"{PARSER_SYSTEM_PROMPT}\n\nTexto do usuário:\n{text}"
+        prompt = load_prompt("parser_user", system=load_prompt("parser_system"), text=text)
 
         try:
             content = self.llm.invoke(

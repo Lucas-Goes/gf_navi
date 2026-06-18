@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 
 from app.services.ask_agent import AskAgent
+
+_SENTINEL = object()
+from app.services.logger import logger
 from app.services.search import SearchService
 from app.storage.sqlite_store import SQLiteStore
 from app.storage.vector_store import VectorStore
@@ -32,15 +37,27 @@ def _get_agent() -> AskAgent:
 async def chat(request: Request):
     body = await request.json()
     question = body.get("question", "").strip()
+    session_id = body.get("session_id") or None
     if not question:
         return {"error": "Pergunta vazia"}
 
     agent = _get_agent()
 
     async def event_stream():
+        loop = asyncio.get_event_loop()
         agent = _get_agent()
-        for chunk in agent.ask(question):
-            yield f"data: {json.dumps({'text': chunk})}\n\n"
+        gen = agent.ask(question, session_id=session_id)
+        while True:
+            chunk = await loop.run_in_executor(None, lambda: next(gen, _SENTINEL))
+            if chunk is _SENTINEL:
+                break
+            if isinstance(chunk, dict):
+                if "debug" in chunk:
+                    yield f"data: {json.dumps({'debug': chunk['debug']})}\n\n"
+                else:
+                    yield f"data: {json.dumps(chunk)}\n\n"
+            else:
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(
@@ -52,3 +69,8 @@ async def chat(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/health")
+async def health():
+    return {"status": "ok", "service": "navi"}

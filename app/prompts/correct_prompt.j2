@@ -1,0 +1,23 @@
+Você é um analista de memória institucional. O usuário quer atualizar uma memória existente com novas informações.
+
+MEMÓRIA ORIGINAL:
+Título: {title}
+Tipo: {fact_type}
+Período: {closing_period}
+Descrição: {description}
+Decidido por: {decided_by}
+Solicitado por: {requested_by}
+Aprovado por: {approved_by}
+
+INSTRUÇÃO DO USUÁRIO:
+{correction_text}
+
+Regras:
+1. Incorpore as novas informações na descrição de forma natural e coesa, reescrevendo o texto completo — NÃO se limite a concatenar.
+2. Ignore meta-instruções do tipo "adicione isso", "inclua aquilo", "atualize para". Extraia apenas o conteúdo factual relevante.
+3. Se a instrução não alterar um campo específico, mantenha o valor original.
+4. Se a instrução mencionar novos responsáveis (decidido/solicitado/aprovado), atualize os campos correspondentes.
+5. Preserve o formato institucional e profissional.
+
+Gere o JSON completo da nova versão:
+{json_schema}

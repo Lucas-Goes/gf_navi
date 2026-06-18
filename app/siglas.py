@@ -62,6 +62,28 @@ def expand_tags(tags: list[str]) -> list[str]:
     return result[:10]
 
 
+def expand_tags_grouped(tags: list[str]) -> list[list[str]]:
+    """Retorna grupos de tags expandidas para AND entre grupos.
+
+    Cada tag original vira um grupo com suas expansões.
+    Ex: ['ep', 'credito'] → [['ep', 'empresas', 'pro'], ['credito']]
+    """
+    siglas = _load()
+    siglas_upper = {k.upper(): k for k in siglas}
+    groups = []
+    for t in tags:
+        group = [t]
+        key = t.upper()
+        if key in siglas_upper:
+            for significado in siglas[siglas_upper[key]]:
+                for word in significado.lower().split():
+                    w = word.strip(".,;:!?")
+                    if w and w not in group:
+                        group.append(w)
+        groups.append(group)
+    return groups
+
+
 def expand_terms(terms: list[str]) -> list[str]:
     """Dada uma lista de termos, adiciona significados de siglas encontradas (match exato)."""
     siglas = _load()

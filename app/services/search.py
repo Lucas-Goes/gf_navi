@@ -40,6 +40,7 @@ class SearchService:
         fact_type: Optional[str] = None,
         closing_period: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        active: Optional[bool] = None,
     ) -> list[SearchResult]:
         fetch_k = max(top_k * 5, 15)
         vector_memories, vector_docs = self.vector.hybrid_search(
@@ -49,28 +50,27 @@ class SearchService:
         memory_ids = [mid for mid, _, _ in vector_memories]
         memories = self.sqlite.get_memories_by_ids(memory_ids)
 
-        if fact_type or closing_period or tags:
+        for sql_active in (True, False) if active is None else (active,):
             sql_memories = self.sqlite.search_memories_sql(
-                fact_type=fact_type,
-                closing_period=closing_period,
-                tags=tags,
-                limit=fetch_k,
+                fact_type=fact_type, closing_period=closing_period,
+                tags=tags, active=sql_active, limit=fetch_k,
             )
             existing_ids = {m.id for m in memories}
             for m in sql_memories:
                 if m.id not in existing_ids:
                     memories.append(m)
                     existing_ids.add(m.id)
+                    memory_ids.append(m.id)
 
         memory_map = {m.id: m for m in memories}
-        id_to_score = {mid: score for mid, score, _ in vector_memories}
+        all_scores = {mid: score for mid, score, _ in vector_memories}
 
         results = []
         for mid in memory_ids:
             memory = memory_map.get(mid)
             if not memory:
                 continue
-            score = id_to_score.get(mid, 0.0)
+            score = all_scores.get(mid, 0.0)
 
             term_boost = _term_bonus(query, memory.title, memory.description)
             combined = score + term_boost * 0.8
@@ -93,14 +93,8 @@ class SearchService:
                 related_documents=docs,
             ))
 
+        if active is not None:
+            results = [r for r in results if r.memory.is_active == active]
+
         results.sort(key=lambda r: r.score, reverse=True)
-        has_match = any(
-            _term_bonus(query, r.memory.title, r.memory.description) > 0
-            for r in results
-        )
-        if has_match:
-            results = [
-                r for r in results
-                if _term_bonus(query, r.memory.title, r.memory.description) > 0
-            ]
         return results[:top_k]

@@ -22,48 +22,7 @@ import re
 import json
 from typing import Any
 
-ROUTER_SYSTEM_PROMPT = """Você é um classificador de intenções para um assistente de memórias institucionais.
-
-Analise a mensagem e classifique na PRIMEIRA opção correspondente, seguindo a ordem abaixo:
-
-1. SAUDACAO: "oi", "bom dia", "boa tarde", "obrigado", "valeu", "tudo bem", "hey", "olá"
-   Ex: "oi tudo bem?" → {"intent": "greeting", "response": "Olá! Como posso ajudar?"}
-   Ex: "obrigado" → {"intent": "greeting", "response": "Por nada! Estou aqui para ajudar."}
-
-2. HELP: perguntar sobre capacidades, comandos, como usar, o que faz
-   Ex: "o que você faz?" → {"intent": "help", "tool": "help", "params": {}}
-   Ex: "quais são os comandos?" → {"intent": "help", "tool": "help", "params": {}}
-
-3. ACTION_ADD: pedir para adicionar/criar/registrar/inserir ALGO NOVO
-   Ex: "adicione nova regra de crédito aprovada em junho" → {"intent": "action", "tool": "add_memory", "params": {"text": "adicione nova regra de crédito aprovada em junho"}}
-   Ex: "cria memoria sobre reunião de hoje" → {"intent": "action", "tool": "add_memory", "params": {"text": "cria memoria sobre reunião de hoje"}}
-
-4. ACTION_CORRECT: pedir para corrigir/atualizar/alterar/modificar existente
-   Ex: "corrige a memoria sobre cadastro EP" → {"intent": "action", "tool": "correct_memory", "params": {"text": "corrige a memoria sobre cadastro EP"}}
-   Ex: "atualiza a regra de compliance" → {"intent": "action", "tool": "correct_memory", "params": {"text": "atualiza a regra de compliance"}}
-
-5. QUERY_LIST: pedir para listar/mostrar/exibir/ver memórias (sem assunto específico)
-   Ex: "me mostre as ultimas memorias" → {"intent": "query", "tool": "list_memories", "params": {"limit": 5}}
-   Ex: "liste as memorias" → {"intent": "query", "tool": "list_memories", "params": {"limit": 20}}
-   Ex: "exiba memorias de junho" → {"intent": "query", "tool": "list_memories", "params": {"limit": 20, "closing_period": "2026-06"}}
-
-6. QUERY_COUNT: perguntar quantas memórias existem, totais, contagens
-   Ex: "quantas memorias temos?" → {"intent": "query", "tool": "count_memories", "params": {}}
-   Ex: "quantas regras de compliance existem?" → {"intent": "query", "tool": "count_memories", "params": {"fact_type": "rule_change"}}
-
-7. QUERY_TOPIC: pergunta sobre ASSUNTO ESPECÍFICO (regra, decisão, implementação)
-   Ex: "o que mudou no cadastro EP?" → {"intent": "query", "tool": "search_memories", "params": {"query": "cadastro EP", "top_k": 3}}
-   Ex: "qual a nova política de crédito?" → {"intent": "query", "tool": "search_memories", "params": {"query": "política de crédito", "top_k": 3}}
-   Ex: "teve algum ponto sobre compliance?" → {"intent": "query", "tool": "search_memories", "params": {"query": "compliance", "top_k": 3}}
-
-8. QUERY_ID: pergunta mencionando ID hexadecimal de 8+ caracteres
-   Ex: "me mostre a memoria a9f51276" → {"intent": "query", "tool": "get_memory_detail", "params": {"id": "a9f51276"}}
-   Ex: "detalhes de 687e911d" → {"intent": "query", "tool": "get_memory_detail", "params": {"id": "687e911d"}}
-
-REGRA DE DESEMPATE: se encaixar em múltiplas opções, escolha a de número MAIOR.
-Ex: "quantas memorias sobre cadastro EP?" → opção 6 (count) e 7 (search) → escolhe 7.
-
-Retorne APENAS o JSON, sem texto adicional."""
+from app.prompts import load_prompt
 
 # Mapeamento de flag -> nome de parâmetro
 _FLAG_MAP = {
@@ -133,7 +92,7 @@ def parse_slash(text: str) -> tuple[str, dict] | None:
     SLASH_MAP = {
         "add": ("add_memory", {"text": rest}),
         "correct": _parse_correct(rest),
-        "search": ("search_memories", {"query": rest, "top_k": 3}),
+        "search": ("search_memories", {"query": rest}),
         "list": ("list_memories", {"limit": 20}),
         "get": ("get_memory_detail", {"id": rest.strip()}),
         "count": ("count_memories", {}),
@@ -175,7 +134,100 @@ def _parse_correct(rest: str) -> tuple[str, dict]:
     return ("correct_memory", {"text": rest})
 
 
-def classify_with_llm(llm, question: str) -> dict | None:
+def _format_conversation_history(history: list[dict]) -> str:
+    if not history:
+        return ""
+    lines = ["Histórico recente da conversa:"]
+    for entry in history:
+        lines.append(f"Usuário: {entry['user']}")
+        cls = entry.get("classification")
+        if cls:
+            tool = cls.get("tool", "")
+            params = cls.get("params", {})
+            if tool:
+                params_str = ", ".join(f"{k}={v}" for k, v in params.items())
+                lines.append(f"  → consulta: {tool}({params_str})")
+        lines.append(f"Assistente: {entry['assistant']}")
+    lines.append("---")
+    lines.append("Com base no histórico ACIMA, classifique APENAS a PERGUNTA MAIS RECENTE do usuário.")
+    return "\n".join(lines)
+
+
+def classify_by_rules(question: str) -> dict | None:
+    """
+    Classificador rule-based para padrões comuns de perguntas.
+    Roda antes do LLM classifier para evitar custo de API em perguntas simples.
+
+    Retorna dict com {intent, tool, params} ou None se não casar nenhum padrão.
+    """
+    q = question.lower().strip().strip("?!.,;:")
+
+    # Padrões de contagem: "quantas", "quantos", "conte", "total de"
+    m = re.match(r'^(quantas|quantos|conte|total de|numero de|qual o total)\b', q)
+    if m:
+        params = {}
+        text_query = None
+
+        # Extrai active de palavras-chave
+        if re.search(r'\binativas?\b|\binativo\b', q):
+            params["active"] = False
+        elif re.search(r'\bativas?\b|\bativo\b', q):
+            params["active"] = True
+
+        # Extrai fact_type se mencionado
+        for ft in ("rule_change", "decision", "implementation", "incident", "other"):
+            if ft in q:
+                params["fact_type"] = ft
+                break
+
+        # Extrai assunto (texto após "sobre", "de", "referente a")
+        assunto = re.split(r'\b(sobre|de|referente a|acerca de)\b', q, maxsplit=1)
+        if len(assunto) > 1:
+            text_query = assunto[-1].strip().strip("?!.,;:")
+            # Limpa palavras de contagem que possam ter ficado
+            text_query = re.sub(r'^(quantas|quantos|conte|total de|numero de)\s+', '', text_query).strip()
+
+        # Com assunto textual → search_memories (count é só para filtros determinísticos)
+        if text_query and len(text_query) > 2:
+            search_params = {"query": text_query}
+            if "active" in params:
+                search_params["active"] = params["active"]
+            if "fact_type" in params:
+                search_params["fact_type"] = params["fact_type"]
+            return {"intent": "tool", "tool": "search_memories", "params": search_params}
+
+        # Sem assunto → count_memories puro (ex: "quantas ativas?")
+        return {"intent": "tool", "tool": "count_memories", "params": params}
+
+    # Padrões de versão atual: "qual a... atual/vigente/mais recente/ultima versao"
+    if re.search(r'\b(qual|quais)\b', q) and re.search(r'\b(atual|vigente|mais recente|ultima versao|versao atual)\b', q):
+        assunto = re.split(r'\b(sobre|de|referente a|acerca de)\b', q, maxsplit=1)
+        if len(assunto) > 1:
+            text_query = assunto[-1].strip().strip("?!.,;:")
+            if len(text_query) > 2:
+                return {"intent": "tool", "tool": "search_memories", "params": {"query": text_query, "latest_only": True}}
+
+    # Padrões de listagem: "liste", "mostre", "quais", "exiba", "lista"
+    if re.match(r'^(liste|mostre|quais|exiba|lista|exibir|listar)\b', q):
+        params = {}
+        if re.search(r'\binativas?\b|\binativo\b', q):
+            params["active"] = False
+        elif re.search(r'\bativas?\b|\bativo\b', q):
+            params["active"] = True
+        return {"intent": "tool", "tool": "list_memories", "params": params}
+
+    # Padrões de busca: "fale sobre", "busque", "pesquise", "o que", "me diga"
+    if re.match(r'^(fale sobre|busque|pesquise|o que|me diga|encontre|procure|pesquisar|buscar)\b', q):
+        # Extrai query removendo o verbo inicial
+        query = re.sub(r'^(fale sobre|busque|pesquise|o que|me diga|encontre|procure|pesquisar|buscar)\s+', '', q)
+        if len(query) > 2:
+            return {"intent": "tool", "tool": "search_memories", "params": {"query": query}}
+
+    return None
+
+
+def classify_with_llm(llm, question: str, conversation_history: list | None = None,
+                      previous_turn: str = "") -> dict | None:
     """
     Classifica a intenção da pergunta usando o LLM com ROUTER_SYSTEM_PROMPT.
 
@@ -186,9 +238,12 @@ def classify_with_llm(llm, question: str) -> dict | None:
     if not llm:
         return None
     try:
+        hist_block = _format_conversation_history(conversation_history or [])
         raw = llm.invoke(
-            prompt=f"Classifique: {question}",
-            system_prompt=ROUTER_SYSTEM_PROMPT,
+            prompt=load_prompt("router_classify", question=question),
+            system_prompt=load_prompt("router_system",
+                conversation_history=hist_block,
+                previous_turn=previous_turn),
             max_tokens=300,
             temperature=0.1,
         )

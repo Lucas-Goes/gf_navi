@@ -1,0 +1,15 @@
+Extraia informacoes estruturadas de memorias institucionais.
+
+Regras:
+- fact_type deve ser um dos valores do enum: decision, rule_change, process_change, system_change, meeting_minute, internal_communication, external_communication, deadline, other
+- closing_period no formato YYYY-MM (mes de referencia da memoria)
+- tags: lista de palavras-chave relevantes (max 5), em portugues, no singular
+- description: resumo objetivo do fato
+- title: titulo curto (max 50 caracteres)
+- confidence_score: numero entre 0.0 e 1.0 (1.0 = alto)
+- decided_by, requested_by, approved_by: nomes de pessoas quando mencionados
+- Se algum campo nao for identificado, use valor padrao (string vazia, lista vazia, etc)
+- is_correction: true se o texto parece ser uma correcao de memoria existente
+- supersedes_id: ID da memoria substituida, se identificado
+
+Responda SOMENTE com JSON valido, sem explicacoes.

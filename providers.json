@@ -1,20 +1,19 @@
 {
+  "active": "nvidia",
   "nvidia": {
-    "llm_provider": "openai",
-    "llm_model_id": "openai/gpt-oss-120b",
-    "llm_endpoint_url": "https://integrate.api.nvidia.com/v1",
-    "llm_api_key": "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"
+    "type": "openai",
+    "model": "openai/gpt-oss-120b",
+    "endpoint": "https://integrate.api.nvidia.com/v1"
   },
   "bedrock": {
-    "llm_provider": "bedrock",
-    "llm_model_id": "anthropic.claude-3-opus-20240229-v1:0",
-    "aws_region": "us-east-1",
-    "aws_profile": "default"
+    "type": "bedrock",
+    "model": "anthropic.claude-3-opus-20240229-v1:0",
+    "region": "us-east-1",
+    "profile": "default"
   },
   "ollama": {
-    "llm_provider": "openai",
-    "llm_model_id": "llama3.2",
-    "llm_endpoint_url": "http://localhost:11434/v1",
-    "llm_api_key": ""
+    "type": "openai",
+    "model": "llama3.2",
+    "endpoint": "http://localhost:11434/v1"
   }
 }

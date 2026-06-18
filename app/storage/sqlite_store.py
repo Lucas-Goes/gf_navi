@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Optional
 
 from app.models import Document, FactType, Memory, MemoryDocument
+from app.services.logger import logger
 from app.services.utils import remove_accents
+from app.siglas import expand_tags_grouped
 
 
 class SQLiteStore:
@@ -19,12 +21,20 @@ class SQLiteStore:
 
     def connect(self):
         if self.conn is None:
-            self.conn = sqlite3.connect(self.db_path)
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
             self.conn.create_function("noaccent", 1, remove_accents)
         return self.conn
+
+    def begin(self):
+        conn = self.connect()
+        conn.execute("BEGIN")
+
+    def rollback(self):
+        if self.conn:
+            self.conn.rollback()
 
     def close(self):
         if self.conn:
@@ -127,8 +137,7 @@ class SQLiteStore:
             return rows[0]["id"]
         if len(rows) > 1:
             matches = ", ".join(r["id"][:8] for r in rows[:5])
-            print(f"   ⚠️  Prefixo '{prefix}' é ambíguo. Múltiplas memórias começam assim: {matches}")
-            print(f"   💡 Use o ID completo (8+ caracteres) para desambiguar.")
+            logger.warning("Prefixo '%s' é ambíguo. Múltiplas memórias: %s", prefix, matches)
         return None
 
     def get_memory(self, memory_id: str) -> Optional[Memory]:
@@ -162,9 +171,17 @@ class SQLiteStore:
         text_query: Optional[str] = None,
         tags: Optional[list[str]] = None,
         limit: int = 20,
+        active: Optional[bool] = None,
+        reverse: bool = False,
+        offset: int = 0,
     ) -> list[Memory]:
         conn = self.connect()
-        conditions = ["is_active = 1"]
+        if active is False:
+            conditions = ["is_active = 0"]
+        elif active is True:
+            conditions = ["is_active = 1"]
+        else:
+            conditions = ["is_active = 1"]  # default: só ativas
         params = []
 
         if fact_type:
@@ -174,27 +191,31 @@ class SQLiteStore:
             conditions.append("closing_period = ?")
             params.append(closing_period)
         if tags:
-            tag_clauses = []
-            for t in tags:
-                tag_clauses.append("tags LIKE ?")
-                params.append(f"%{t}%")
-            conditions.append(f"({' OR '.join(tag_clauses)})")
+            groups = expand_tags_grouped(tags)
+            group_clauses = []
+            for group in groups:
+                or_clauses = []
+                for t in group:
+                    or_clauses.append("',' || tags || ',' LIKE '%,' || ? || ',%'")
+                    params.append(t)
+                group_clauses.append(f"({' OR '.join(or_clauses)})")
+            conditions.append(f"({' AND '.join(group_clauses)})")
         if text_query:
             tokens = [t.strip() for t in text_query.split() if t.strip()]
-            if len(tokens) > 1:
+            if len(tokens):
                 clauses = []
                 for token in tokens:
-                    clauses.append("(noaccent(title) LIKE noaccent(?) OR noaccent(description) LIKE noaccent(?))")
-                    params.extend([f"%{token}%", f"%{token}%"])
-                conditions.append(f"({' OR '.join(clauses)})")
-            else:
-                conditions.append("(noaccent(title) LIKE noaccent(?) OR noaccent(description) LIKE noaccent(?))")
-                params.extend([f"%{text_query}%", f"%{text_query}%"])
+                    clauses.append("(noaccent(title) LIKE noaccent(?) OR noaccent(description) LIKE noaccent(?)"
+                                   " OR ',' || tags || ',' LIKE '%,' || noaccent(?) || ',%')")
+                    params.extend([f"%{token}%", f"%{token}%", f"%{token}%"])
+                conditions.append(f"({' AND '.join(clauses)})")
 
         where = " AND ".join(conditions)
+        order = "created_at ASC" if reverse else "created_at DESC"
+        limit_val = limit if limit is not None else 50
         rows = conn.execute(
-            f"SELECT * FROM memories WHERE {where} ORDER BY created_at DESC LIMIT ?",
-            (*params, limit),
+            f"SELECT * FROM memories WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
+            (*params, limit_val, offset),
         ).fetchall()
         return [self._row_to_memory(r) for r in rows]
 

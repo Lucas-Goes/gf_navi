@@ -7,12 +7,13 @@ Funções:
   normalize        → normalizar para ASCII lowercase (usado em comparações)
   clean_tags       → limpar tags de string CSV (usado no parser e CLI)
   clean_tag_list   → limpar lista de tags (usado no parser)
-  extract_keywords → extrair palavras-chave relevantes (usado no ReActAgent)
+  extract_keywords → extrair palavras-chave relevantes
   STOPWORDS        → conjunto de stopwords em português
 """
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 
@@ -74,9 +75,10 @@ def normalize(text: str) -> str:
 def clean_tags(tags_str: str) -> list[str]:
     """
     Converte string CSV de tags em lista limpa.
-    Usado em: CLI (cmd_add), tools.py.
+    Suporta separação por vírgula OU espaço.
+    Usado em: CLI (cmd_add), tools.py, tool_queries.py.
     """
-    return [t.strip().lower()[:20] for t in tags_str.split(",") if t.strip()]
+    return [t.strip().lower()[:20] for t in re.split(r"[,\s]+", tags_str) if t.strip()]
 
 
 def clean_tag_list(raw_tags: list) -> list[str]:

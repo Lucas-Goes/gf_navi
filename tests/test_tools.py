@@ -3,12 +3,12 @@ from __future__ import annotations
 import unittest
 
 from app.models import FactType, Preview
-from app.services.tools import (
+from app.services.tool_registry import (
     TOOL_LABELS, TOOL_DEFINITIONS, _is_empty_result,
-    _format_tool_descriptions, _format_user_help,
-    _store_preview, _confirm_preview, _cancel_preview,
-    _execute_tool,
+    _format_tool_descriptions, _format_user_help, _execute_tool,
+    REACT_EXCLUDED,
 )
+from app.services.tool_helpers import _store_preview, _confirm_preview, _cancel_preview
 
 
 class TestToolLabels(unittest.TestCase):
@@ -62,13 +62,16 @@ class TestFormatToolDescriptions(unittest.TestCase):
     def test_returns_string(self):
         result = _format_tool_descriptions()
         self.assertIsInstance(result, str)
-        self.assertIn("count_memories", result)
+        self.assertNotIn("count_memories", result)
         self.assertIn("search_memories", result)
 
     def test_includes_all_tools(self):
         result = _format_tool_descriptions()
         for name in TOOL_DEFINITIONS:
-            self.assertIn(name, result)
+            if name in REACT_EXCLUDED:
+                self.assertNotIn(name, result)
+            else:
+                self.assertIn(name, result)
 
 
 class TestFormatUserHelp(unittest.TestCase):

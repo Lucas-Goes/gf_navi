@@ -182,6 +182,9 @@ requestAnimationFrame(animateEnergy);
 
 try { initEnergy(); animateEnergy(); } catch (e) { console.error('Energy particles init failed:', e); }
 
+// Session ID for conversation context
+let SESSION_ID = 's-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
 const setupView = document.getElementById('setup-view');
 const messagesContainer = document.getElementById('messages-container');
 const chatInput = document.getElementById('chat-input');
@@ -218,6 +221,7 @@ function hideChat() {
   resizeEnergy();
   energyParticles = [];
   initEnergy();
+  SESSION_ID = 's-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
 document.querySelectorAll('#setup-view .group').forEach(card => {
@@ -348,22 +352,27 @@ xhr.open('POST', '/api/chat', true);
 xhr.setRequestHeader('Content-Type', 'application/json');
 
 let fullText = '';
+let debugEvents = [];
 
 xhr.onprogress = function () {
   const text = xhr.responseText;
   const lines = text.split('\n');
   fullText = '';
+  let newDebug = [];
   for (const line of lines) {
     if (line.startsWith('data: ')) {
       try {
         const data = JSON.parse(line.slice(6));
         if (data.done) break;
         if (data.text) fullText += data.text;
+        if (data.debug) newDebug.push(data.debug);
       } catch (e) {}
     }
   }
+  if (newDebug.length) debugEvents = newDebug;
   if (fullText) {
-    naviContent.innerHTML = parseMarkdown(fullText);
+    const sanitized = DOMPurify.sanitize(parseMarkdown(fullText));
+    naviContent.innerHTML = sanitized;
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
     highlightCode();
   }
@@ -371,11 +380,40 @@ xhr.onprogress = function () {
 
 xhr.onloadend = function () {
   if (xhr.status !== 200) {
-    naviContent.innerHTML = '<p class="text-red-400">Erro ao conectar com o servidor.</p>';
+    naviContent.innerHTML = DOMPurify.sanitize('<p class="text-red-400">Erro ao conectar com o servidor.</p>');
+  } else if (debugEvents.length) {
+    const panelId = 'debug-' + Date.now();
+    const count = debugEvents.length;
+    let panelHtml = `<div class="debug-panel" id="${panelId}" data-count="${count}">
+      <button onclick="toggleDebug('${panelId}')" class="debug-toggle">🔍 Debug (${count} eventos)</button>
+      <div class="debug-content" style="display:none">`;
+    for (const ev of debugEvents) {
+      const formatted = escapeHtml(JSON.stringify(ev, null, 2));
+      const label = ev.label || '';
+      panelHtml += `<details class="debug-entry"${label ? ' open' : ''}>
+        <summary>${label ? escapeHtml(label) : 'evento'}</summary>
+        <pre>${formatted}</pre>
+      </details>`;
+    }
+    panelHtml += `</div></div>`;
+    naviContent.insertAdjacentHTML('beforeend', panelHtml);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }
 };
 
-xhr.send(JSON.stringify({ question: msg }));
+xhr.send(JSON.stringify({ question: msg, session_id: SESSION_ID }));
+}
+
+function toggleDebug(panelId) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  const content = panel.querySelector('.debug-content');
+  const btn = panel.querySelector('.debug-toggle');
+  if (content) {
+    const show = content.style.display === 'none';
+    content.style.display = show ? 'block' : 'none';
+    if (btn) btn.textContent = show ? '🔍 Ocultar debug' : `🔍 Debug (${panel.dataset.count || '?'} eventos)`;
+  }
 }
 
 function parseMarkdown(md) {
@@ -454,6 +492,7 @@ const SLASH_COMMANDS = [
   { cmd: '/count', desc: 'Contar memórias', usage: '/count [--type]' },
   { cmd: '/help', desc: 'Mostrar comandos disponíveis', usage: '/help' },
   { cmd: '/sync-docs', desc: 'Sincronizar documentos', usage: '/sync-docs' },
+  { cmd: '/debug', desc: 'Ativar/desativar modo debug', usage: '/debug' },
 ];
 
 const slashMenu = document.getElementById('slash-menu');

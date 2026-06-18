@@ -7,6 +7,7 @@ from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 
 from app.config import settings
+from app.services.logger import logger
 
 
 class VectorStore:
@@ -57,7 +58,7 @@ class VectorStore:
         try:
             self.memories_collection.delete(ids=[memory_id])
         except Exception as e:
-            print(f"   ⚠️  Erro ao remover memória do índice vetorial: {e}")
+            logger.warning("Erro ao remover memória do índice vetorial: %s", e)
 
     def search_memories(
         self, query: str, top_k: int = 5
@@ -84,7 +85,7 @@ class VectorStore:
         try:
             self.documents_collection.delete(ids=[doc_id])
         except Exception as e:
-            print(f"   ⚠️  Erro ao remover documento do índice vetorial: {e}")
+            logger.warning("Erro ao remover documento do índice vetorial: %s", e)
 
     def search_documents(
         self, query: str, top_k: int = 5

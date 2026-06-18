@@ -35,13 +35,15 @@ from app.config import settings
 from app.models import Preview
 from app.services.parser import ParserService
 from app.services.utils import clean_tags
-from app.services.tools import (
+from app.services.tool_helpers import (
     _get_sqlite, _get_llm, _get_search, _get_ingestion,
+)
+from app.services.tool_queries import (
     _add_memory, _correct_memory, _infer_memory,
     _search_memories, _list_memories, _get_memory_detail,
     _count_memories, _list_periods, _list_fact_types, _search_documents,
-    CORRECT_PROMPT, CORRECT_JSON_SCHEMA,
 )
+from app.prompts import load_prompt
 from app.db_viewer import _db_conn, cmd_db as db_cmd
 from app.doc_sync import cmd_sync_docs, _link_documents
 
@@ -159,7 +161,7 @@ def cmd_correct(args):
 
     print(f"\n📌 Memória original: {old.title} ({old.id[:8]})\n")
 
-    prompt = CORRECT_PROMPT.format(
+    prompt = load_prompt("correct_prompt",
         title=old.title,
         fact_type=old.fact_type.value,
         closing_period=old.closing_period,
@@ -168,7 +170,7 @@ def cmd_correct(args):
         requested_by=old.requested_by or "",
         approved_by=old.approved_by or "",
         correction_text=text,
-        json_schema=CORRECT_JSON_SCHEMA,
+        json_schema=load_prompt("correct_schema"),
     )
 
     print("🧠 Fazendo merge do conteúdo com a correção...\n")
@@ -214,7 +216,7 @@ def cmd_correct(args):
 def cmd_ask(args):
     from app.services.ask_agent import AskAgent
 
-    from app.services.tools import _get_vector
+    from app.services.tool_helpers import _get_vector
     question = " ".join(args.text) if isinstance(args.text, list) else args.text
 
     agent = AskAgent(_get_search(), _get_vector())
@@ -373,55 +375,31 @@ def cmd_provider(args):
     providers = json.loads(PROVIDERS_FILE.read_text())
 
     if not args.name:
-        current = settings.llm_provider
+        current = providers.get("active", "nvidia")
+        p = providers.get(current, {})
         print(f"\n🔌 Provider atual: {current}")
-        print(f"   Modelo: {settings.llm_model_id}")
-        print(f"   Endpoint: {settings.llm_endpoint_url or '—'}")
-        print(f"\n   Providers disponíveis: {', '.join(providers.keys())}")
+        print(f"   Tipo: {p.get('type', '—')}")
+        print(f"   Modelo: {p.get('model', '—')}")
+        print(f"   Endpoint: {p.get('endpoint', '—')}")
+        print(f"\n   Providers disponíveis: {', '.join(k for k in providers if k != 'active')}")
         print(f"   Use: python cli.py provider <nome>\n")
         return
 
     name = args.name.lower()
     if name not in providers:
         print(f"❌ Provider '{name}' não encontrado.")
-        print(f"   Disponíveis: {', '.join(providers.keys())}")
+        print(f"   Disponíveis: {', '.join(k for k in providers if k != 'active')}")
         return
 
+    providers["active"] = name
+    PROVIDERS_FILE.write_text(json.dumps(providers, indent=2) + "\n")
+
     conf = providers[name]
-    env_path = Path(__file__).parent / ".env"
-
-    key_mapping = {
-        "llm_provider": "LLM_PROVIDER",
-        "llm_model_id": "LLM_MODEL_ID",
-        "llm_endpoint_url": "LLM_ENDPOINT_URL",
-        "llm_api_key": "LLM_API_KEY",
-        "aws_region": "AWS_REGION",
-        "aws_profile": "AWS_PROFILE",
-    }
-
-    env_keys = set(key_mapping.values())
-    lines = env_path.read_text().splitlines() if env_path.exists() else []
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            new_lines.append(line)
-            continue
-        key, _, _ = stripped.partition("=")
-        if key.strip() in env_keys:
-            continue
-        new_lines.append(line)
-
-    for lk, uk in key_mapping.items():
-        if lk in conf:
-            new_lines.append(f"{uk}={conf[lk]}")
-
-    env_path.write_text("\n".join(new_lines) + "\n")
-
     print(f"\n✅ Provider trocado para: {name}")
-    print(f"   Modelo: {conf.get('llm_model_id', '—')}")
-    print(f"   Endpoint: {conf.get('llm_endpoint_url', '—')}")
-    print("   Reinicie o CLI para aplicar as mudanças.\n")
+    print(f"   Tipo: {conf.get('type', '—')}")
+    print(f"   Modelo: {conf.get('model', '—')}")
+    print(f"   Endpoint: {conf.get('endpoint', '—')}")
+    print("   Reinicie o servidor para aplicar as mudanças.\n")
 
 
 def _cli_help():
